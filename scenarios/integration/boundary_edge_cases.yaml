@@ -1,0 +1,488 @@
+scenario:
+  metadata:
+    id: "INT-010"
+    name: "Boundary & Edge Cases"
+    type: integration
+    duration: "2 hours"
+
+  description: "Comprehensive testing of boundary conditions and edge cases: disk full, numeric overflows, extreme validator counts, max amounts, empty states, and other corner cases."
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "user-{1-100}"
+        role: "general_user"
+        variant: "power"
+        count: 100
+        wallet_ax: 1000000000000  # Large balance for testing
+
+      - id: "validator-{1-21}"
+        role: "validator"
+        variant: "honest"
+        count: 21
+
+  phases:
+    # ===== NUMERIC BOUNDARY TESTING =====
+    - name: "Max amount boundary (u64::MAX)"
+      duration: "10 min"
+      phases:
+        - name: "Transfer u64::MAX"
+          bots: "user-1"
+          behavior: "transfer.boundary"
+          params:
+            amount: 18446744073709551615  # u64::MAX
+            expect_rejection: true
+
+        - name: "Transfer u64::MAX - 1"
+          bots: "user-2"
+          behavior: "transfer.boundary"
+          params:
+            amount: 18446744073709551614  # u64::MAX - 1
+            should_succeed_if_balance_sufficient: true
+
+        - name: "Transfer causing overflow"
+          bots: "user-3"
+          behavior: "transfer.overflow_attempt"
+          params:
+            amount: 18446744073709551615
+            recipient_current_balance: 1000
+            expect_rejection: true
+            rejection_reason: "overflow"
+
+        - name: "Cross-chain lock with max amount"
+          bots: "user-4"
+          behavior: "cross_chain.lock_mint"
+          params:
+            amount: 18446744073709551615
+            expect_rejection: true
+
+      metrics:
+        - max_amount_rejections: "count"
+        - overflow_detections: "count"
+        - underflow_detections: "count"
+
+      assertions:
+        - all_overflows_rejected: true
+        - u64_max_handled_safely: true
+        - no_silent_wrapping: true
+
+    - name: "Zero and near-zero amounts"
+      duration: "5 min"
+      phases:
+        - name: "Transfer zero amount"
+          bots: "user-5"
+          behavior: "transfer.simple"
+          params:
+            amount: 0
+            expect_rejection: true
+            rejection_reason: "amount_too_small"
+
+        - name: "Transfer 1 token (minimum)"
+          bots: "user-6"
+          behavior: "transfer.simple"
+          params:
+            amount: 1
+            should_succeed: true
+
+        - name: "Cross-chain with zero"
+          bots: "user-7"
+          behavior: "cross_chain.lock_mint"
+          params:
+            amount: 0
+            expect_rejection: true
+
+      assertions:
+        - zero_amounts_rejected: true
+        - minimum_amounts_accepted: true
+
+    # ===== VALIDATOR COUNT EDGE CASES =====
+    - name: "Single validator network (no consensus possible)"
+      duration: "10 min"
+      setup_phase: true
+      network_config:
+        validators: 1
+
+      phases:
+        - name: "Attempt block production"
+          bots: "validator-1"
+          behavior: "validator.produce_blocks"
+          params:
+            expect_stall: true
+
+        - name: "Monitor consensus state"
+          monitor: "consensus"
+          track:
+            - blocks_proposed: "count"
+            - blocks_finalized: "count (should be 0)"
+            - quorum_achieved: "boolean (should be false)"
+
+      metrics:
+        - single_validator_blocks_proposed: "count"
+        - single_validator_blocks_finalized: "count (should be 0)"
+        - consensus_timeouts: "count"
+
+      assertions:
+        - no_blocks_finalized: true  # Need 2/3 quorum, can't get it with 1
+        - proposals_created: true  # Can propose but not finalize
+        - network_stalled: true
+
+    - name: "Zero validators (bootstrap scenario)"
+      duration: "5 min"
+      setup_phase: true
+      network_config:
+        validators: 0
+
+      phases:
+        - name: "Attempt to start network"
+          action: "start_network"
+          params:
+            genesis_validators: []
+
+        - name: "User attempts transaction"
+          bots: "user-1"
+          behavior: "transfer.simple"
+          params:
+            amount: 1000000
+            expect_failure: true
+
+      metrics:
+        - network_start_success: "boolean (should be false)"
+        - transactions_processed: "count (should be 0)"
+
+      assertions:
+        - network_cannot_start: true
+        - transactions_rejected: true
+
+    - name: "Minimum viable network (4 validators, 2/3 = 3)"
+      duration: "10 min"
+      setup_phase: true
+      network_config:
+        validators: 4
+
+      phases:
+        - name: "Produce blocks with 4 validators"
+          bots: "validator-{1-4}"
+          behavior: "validator.produce_blocks"
+
+        - name: "Crash 1 validator (3/4 remaining)"
+          chaos_injection:
+            type: "validator_crash"
+            target: "validator-4"
+
+        - name: "Continue with 3/4 validators"
+          bots: "validator-{1-3}"
+          behavior: "validator.produce_blocks"
+
+      metrics:
+        - blocks_with_4_validators: "count"
+        - blocks_with_3_validators: "count"
+        - finality_maintained: "boolean"
+
+      assertions:
+        - blocks_finalized_with_4: true
+        - blocks_finalized_with_3: true  # 3/4 > 2/3
+        - consensus_maintained: true
+
+    # ===== DISK FULL SCENARIOS =====
+    - name: "Disk full during block production"
+      duration: "15 min"
+      phases:
+        - name: "Fill disk to threshold"
+          chaos_injection:
+            type: "disk_fill"
+            target: "validator-1"
+            fill_percentage: 95
+
+        - name: "Attempt block production"
+          bots: "validator-1"
+          behavior: "validator.produce_blocks"
+          params:
+            track_disk_errors: true
+
+        - name: "Monitor disk errors"
+          monitor: "validator-1"
+          track:
+            - disk_write_failures: "count"
+            - block_production_errors: "count"
+            - emergency_state_pruning: "triggered"
+
+      metrics:
+        - disk_full_errors: "count"
+        - blocks_failed_to_write: "count"
+        - state_pruning_triggered: "boolean"
+        - disk_space_freed: "bytes"
+
+      assertions:
+        - disk_full_detected: true
+        - emergency_pruning_triggered: true
+        - graceful_degradation: true  # Don't crash, handle error
+
+    - name: "Disk full during state sync"
+      duration: "10 min"
+      phases:
+        - name: "Start state sync"
+          bots: "validator-2"
+          behavior: "validator.sync_state"
+          params:
+            sync_from_height: 0
+
+        - name: "Fill disk mid-sync"
+          chaos_injection:
+            type: "disk_fill"
+            target: "validator-2"
+            timing: "mid_sync"
+            fill_percentage: 98
+
+        - name: "Monitor sync behavior"
+          monitor: "validator-2"
+          track:
+            - sync_progress: "%"
+            - disk_errors: "count"
+            - sync_aborted: "boolean"
+
+      metrics:
+        - sync_completed: "boolean (should be false)"
+        - sync_cleanly_aborted: "boolean"
+        - partial_state_cleaned_up: "boolean"
+
+      assertions:
+        - sync_failed_gracefully: true
+        - no_corrupted_state: true
+        - error_message_clear: true
+
+    - name: "Log rotation during high load"
+      duration: "10 min"
+      phases:
+        - name: "Generate high log volume"
+          bots: "user-*"
+          behavior: "transfer.simple"
+          params:
+            transactions_per_min: 500
+            verbose_logging: true
+
+        - name: "Trigger log rotation"
+          action: "rotate_logs"
+          params:
+            max_log_size: "100MB"
+            compress_old_logs: true
+
+        - name: "Monitor log rotation impact"
+          monitor: "all_nodes"
+          track:
+            - log_rotation_time: "seconds"
+            - operations_delayed: "count"
+            - operations_failed: "count"
+
+      metrics:
+        - log_rotation_impact: "% performance degradation"
+        - logs_rotated: "count"
+        - disk_space_freed: "bytes"
+
+      assertions:
+        - log_rotation_successful: true
+        - performance_impact: "<5%"
+        - no_operations_failed: true
+
+    # ===== EMPTY STATE EDGE CASES =====
+    - name: "Empty mempool operations"
+      duration: "5 min"
+      phases:
+        - name: "Clear mempool"
+          action: "clear_mempool"
+
+        - name: "Query empty mempool"
+          bots: "user-1"
+          behavior: "query.mempool"
+
+        - name: "Produce block with empty mempool"
+          bots: "validator-1"
+          behavior: "validator.produce_blocks"
+          params:
+            block_count: 1
+
+      metrics:
+        - empty_mempool_queries: "count"
+        - empty_blocks_produced: "count"
+
+      assertions:
+        - empty_mempool_handled: true
+        - empty_block_valid: true
+
+    - name: "No active proposals (governance)"
+      duration: "5 min"
+      phases:
+        - name: "Query proposals with none active"
+          bots: "user-1"
+          behavior: "governance.query_proposals"
+
+        - name: "Attempt to vote on non-existent proposal"
+          bots: "user-2"
+          behavior: "governance.vote"
+          params:
+            proposal_id: "non_existent"
+            expect_rejection: true
+
+      assertions:
+        - empty_proposal_list_handled: true
+        - invalid_proposal_rejected: true
+
+    - name: "No orders in orderbook (DEX)"
+      duration: "5 min"
+      phases:
+        - name: "Query empty orderbook"
+          bots: "user-1"
+          behavior: "dex.query_orderbook"
+          params:
+            trading_pair: "AX/DX"
+
+        - name: "Submit market order with no liquidity"
+          bots: "user-2"
+          behavior: "dex.market_order"
+          params:
+            amount: 1000000
+            expect_rejection: true
+            rejection_reason: "no_liquidity"
+
+      assertions:
+        - empty_orderbook_handled: true
+        - no_liquidity_error_clear: true
+
+    # ===== EXTREME VALUE TESTING =====
+    - name: "Very large transaction batch"
+      duration: "10 min"
+      phases:
+        - name: "Submit 10,000 transactions at once"
+          bots: "user-{1-100}"
+          behavior: "transfer.batch"
+          params:
+            transactions_per_bot: 100  # 100 * 100 = 10,000
+            batch_submission: true
+
+        - name: "Monitor mempool saturation"
+          monitor: "mempool"
+          track:
+            - mempool_size: "count"
+            - transactions_accepted: "count"
+            - transactions_rejected: "count"
+            - mempool_full_events: "count"
+
+      metrics:
+        - max_mempool_size_reached: "count"
+        - transaction_rejection_rate: "%"
+        - mempool_recovery_time: "seconds"
+
+      assertions:
+        - mempool_limits_enforced: true
+        - no_mempool_crash: true
+        - rejections_handled_gracefully: true
+
+    - name: "Very long string fields"
+      duration: "5 min"
+      phases:
+        - name: "Transaction with max memo length"
+          bots: "user-1"
+          behavior: "transfer.with_memo"
+          params:
+            amount: 1000000
+            memo: "A" * 1024  # Max allowed memo length
+            should_succeed: true
+
+        - name: "Transaction with excessive memo"
+          bots: "user-2"
+          behavior: "transfer.with_memo"
+          params:
+            amount: 1000000
+            memo: "A" * 10000  # Exceeds limit
+            expect_rejection: true
+
+      assertions:
+        - max_length_fields_accepted: true
+        - excessive_length_rejected: true
+
+    # ===== TIME-BASED EDGE CASES =====
+    - name: "Timestamp edge cases"
+      duration: "10 min"
+      phases:
+        - name: "Transaction with future timestamp"
+          bots: "user-1"
+          behavior: "transfer.with_timestamp"
+          params:
+            amount: 1000000
+            timestamp: "now + 1 hour"
+            expect_rejection: true
+
+        - name: "Transaction with past timestamp"
+          bots: "user-2"
+          behavior: "transfer.with_timestamp"
+          params:
+            amount: 1000000
+            timestamp: "now - 1 hour"
+            expect_rejection: true
+
+        - name: "Transaction with epoch 0 timestamp"
+          bots: "user-3"
+          behavior: "transfer.with_timestamp"
+          params:
+            amount: 1000000
+            timestamp: 0
+            expect_rejection: true
+
+      assertions:
+        - future_timestamps_rejected: true
+        - stale_timestamps_rejected: true
+        - zero_timestamp_rejected: true
+
+    - name: "Nonce edge cases"
+      duration: "10 min"
+      phases:
+        - name: "Transaction with nonce 0"
+          bots: "user-1"
+          behavior: "transfer.with_nonce"
+          params:
+            amount: 1000000
+            nonce: 0
+            should_succeed_if_first_tx: true
+
+        - name: "Transaction with nonce u64::MAX"
+          bots: "user-2"
+          behavior: "transfer.with_nonce"
+          params:
+            amount: 1000000
+            nonce: 18446744073709551615
+            expect_rejection: true
+
+        - name: "Transaction with stale nonce"
+          bots: "user-3"
+          behavior: "transfer.with_nonce"
+          params:
+            amount: 1000000
+            nonce: 0  # Reuse old nonce
+            expect_rejection: true
+
+      assertions:
+        - nonce_0_handled: true
+        - max_nonce_rejected: true
+        - stale_nonce_rejected: true
+
+  success_criteria:
+    - numeric_boundaries_enforced: true
+    - overflows_prevented: true
+    - single_validator_handled: true
+    - zero_validators_rejected: true
+    - minimum_network_functional: true
+    - disk_full_handled_gracefully: true
+    - empty_states_handled: true
+    - extreme_values_rejected: true
+    - timestamp_validation_working: true
+    - nonce_validation_working: true
+
+  notes:
+    - "P3 gaps: Lower priority but important for robustness"
+    - "Numeric overflows can lead to serious exploits if not caught"
+    - "Disk full is a common operational failure mode"
+    - "Empty states and edge cases often overlooked in testing"
+    - "Validator count edge cases important for network bootstrap"
+    - "This scenario validates defensive programming throughout the codebase"

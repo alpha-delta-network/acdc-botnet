@@ -1,0 +1,127 @@
+scenario:
+  metadata:
+    id: "FUNC-009"
+    name: "D007 Off-Ramp KYC Flow"
+    type: functional
+    duration: "1 hour"
+
+  description: "Complete D007 off-ramp testing: KYC verification, bank settlement, escrow management"
+
+  setup:
+    network:
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "kyc-user-{1-100}"
+        role: "general_user"
+        variant: "power"
+        count: 100
+        wallet_dx: 10000000
+
+      - id: "kyc-validator-{1-5}"
+        role: "general_user"
+        variant: "power"
+        count: 5
+        wallet_dx: 100000
+
+  phases:
+    - name: "KYC registration phase"
+      duration: "10 min"
+      bots: "kyc-user-{1-50}"
+      behavior: "d007.kyc_register"
+      params:
+        user_info:
+          full_name: "Test User {bot_id}"
+          email: "user{bot_id}@example.com"
+          country: "US"
+          dob: "1990-01-01"
+        documentation:
+          id_type: "passport"
+          id_number: "P{bot_id}123456"
+          proof_of_address: "document_hash"
+
+      metrics:
+        - registration_submissions: "count"
+        - registration_success_rate: "%"
+
+      assertions:
+        - all_registrations_submitted: true
+        - registration_ids_unique: true
+
+    - name: "KYC verification (manual review simulation)"
+      duration: "15 min"
+      bots: "kyc-validator-*"
+      behavior: "d007.kyc_verify"
+      params:
+        verification_rate: 10  # 10 verifications per validator per minute
+        approval_rate: 0.9  # 90% approval rate
+        rejection_reasons: ["incomplete_docs", "suspicious_activity", "duplicate"]
+
+      assertions:
+        - verifications_completed: ">40"
+        - approval_rate: "~90%"
+        - rejection_reasons_valid: true
+
+    - name: "Approved users initiate off-ramp"
+      duration: "15 min"
+      bots: "kyc-user-*"
+      behavior: "d007.initiate_offramp"
+      params:
+        amount_dx: 50000
+        target_currency: "USD"
+        bank_account:
+          account_number: "ACC{bot_id}"
+          routing_number: "123456789"
+          bank_name: "Test Bank"
+
+      assertions:
+        - offramp_requests_submitted: true
+        - escrow_locked: true
+        - only_approved_users_succeed: true
+
+    - name: "Bank settlement processing"
+      duration: "10 min"
+      behavior: "d007.process_settlement"
+      params:
+        settlement_delay: "2 min"  # Simulate bank processing time
+        settlement_success_rate: 0.95  # 95% success rate
+
+      metrics:
+        - settlements_processed: "count"
+        - settlement_success_rate: "%"
+        - settlement_time_avg: "seconds"
+
+      assertions:
+        - settlement_rate: "~95%"
+        - escrow_released_on_success: true
+        - escrow_returned_on_failure: true
+
+    - name: "Failed settlement retry"
+      duration: "5 min"
+      behavior: "d007.retry_failed_settlements"
+      params:
+        retry_attempts: 3
+        retry_delay: "1 min"
+
+      assertions:
+        - retry_attempts_correct: true
+        - eventual_success_rate: ">98%"
+
+    - name: "KYC rejection handling"
+      duration: "5 min"
+      bots: "kyc-user-{51-100}"
+      behavior: "d007.handle_rejection"
+      params:
+        resubmit_with_corrections: true
+
+      assertions:
+        - rejected_users_cannot_offramp: true
+        - resubmission_allowed: true
+
+  success_criteria:
+    - kyc_registration_rate: ">95%"
+    - kyc_approval_rate: "~90%"
+    - offramp_initiation_rate: ">90%"
+    - settlement_success_rate: ">95%"
+    - escrow_management_correct: true
+    - no_unauthorized_offramps: true

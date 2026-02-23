@@ -1,0 +1,320 @@
+scenario:
+  metadata:
+    id: "SEC-009"
+    name: "Long-Range Attack Simulation"
+    type: security
+    duration: "2 hours"
+
+  description: "Test long-range attacks where adversaries with old validator keys attempt to create alternative chain history from genesis or deep past. Verify weak subjectivity protections and checkpointing."
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    historical_data:
+      enable_historical_mode: true
+      genesis_keys: "load_from_archive"  # Load old validator keys from genesis
+      checkpoint_interval: 1000  # Blocks
+
+    bots:
+      - id: "honest-validator-{1-15}"
+        role: "validator"
+        variant: "honest"
+        count: 15
+
+      - id: "honest-user-{1-100}"
+        role: "general_user"
+        variant: "power"
+        count: 100
+        wallet_ax: 50000000
+
+      - id: "attacker-validator-{1-6}"
+        role: "validator"
+        variant: "byzantine"
+        count: 6
+        historical_keys: true  # Use old validator keys from past epochs
+
+      - id: "attacker-coordinator"
+        role: "general_user"
+        variant: "malicious"
+        count: 1
+
+  phases:
+    - name: "Establish canonical chain"
+      duration: "20 min"
+      bots: "honest-validator-*"
+      behavior: "validator.produce_blocks"
+      params:
+        block_production_rate: "normal"
+        finalize_blocks: true
+
+      concurrent:
+        - bots: "honest-user-{1-50}"
+          behavior: "transfer.simple"
+          params:
+            transactions_per_min: 100
+
+      metrics:
+        - canonical_chain_length: "blocks"
+        - checkpoints_created: "count"
+        - finalized_blocks: "count"
+
+      assertions:
+        - chain_progressing: true
+        - checkpoints_regular: true
+        - blocks_finalized: ">95%"
+
+    - name: "Attacker obtains old validator keys"
+      duration: "5 min"
+      setup_phase: true
+      bots: "attacker-validator-*"
+      behavior: "adversarial.load_historical_keys"
+      params:
+        key_epoch: "genesis"  # Use keys from genesis
+        unbonding_completed: true  # Simulate unbonded validators
+
+      metrics:
+        - historical_keys_loaded: "count"
+        - historical_voting_power: "% of genesis"
+
+      assertions:
+        - historical_keys_valid: true
+        - combined_voting_power: ">=33%"  # Need enough power to be credible
+
+    - name: "Long-range attack - alternative chain from genesis"
+      duration: "30 min"
+      phases:
+        - name: "Fork from genesis"
+          bots: "attacker-validator-*"
+          behavior: "adversarial.fork_from_genesis"
+          params:
+            start_height: 0
+            target_height: "current_canonical - 100"  # Build chain almost as long
+            block_production_rate: "fast"  # Produce blocks quickly
+            include_transactions: true
+            fake_history: true
+
+        - name: "Broadcast alternative chain"
+          bots: "attacker-coordinator"
+          behavior: "adversarial.broadcast_fork"
+          params:
+            target_peers: "all_honest_nodes"
+            fork_chain: "alternative_genesis"
+            broadcast_method: "aggressive"
+
+        - name: "Monitor honest node responses"
+          bots: "honest-validator-*"
+          behavior: "validator.fork_detection"
+          params:
+            fork_choice_rule: "longest_chain"
+            weak_subjectivity_enabled: true
+            checkpoint_verification: true
+
+      metrics:
+        - alternative_chain_length: "blocks"
+        - alternative_chain_weight: "cumulative difficulty"
+        - honest_nodes_accepting_fork: "count (should be 0)"
+        - honest_nodes_rejecting_fork: "count"
+        - fork_detection_time: "seconds"
+
+      assertions:
+        - alternative_chain_created: true
+        - alternative_chain_long: ">=1000 blocks"
+        - no_honest_nodes_fooled: true
+        - fork_detected_immediately: true
+
+    - name: "Long-range attack - fork from old checkpoint"
+      duration: "30 min"
+      phases:
+        - name: "Fork from old checkpoint"
+          bots: "attacker-validator-*"
+          behavior: "adversarial.fork_from_checkpoint"
+          params:
+            checkpoint_height: 5000  # Fork from 5000 blocks ago
+            target_height: "current_canonical + 100"  # Make it longer
+            block_production_rate: "fast"
+            manipulate_timestamps: true
+
+        - name: "Broadcast to new nodes"
+          bots: "attacker-coordinator"
+          behavior: "adversarial.target_new_nodes"
+          params:
+            target: "nodes_syncing_from_scratch"
+            present_as_canonical: true
+
+        - name: "New node sync simulation"
+          setup_phase: true
+          new_nodes:
+            - id: "new-node-{1-10}"
+              type: "full_node"
+              count: 10
+              sync_from: "network"  # Will see both chains
+
+        - name: "Verify weak subjectivity checkpoint protection"
+          bots: "new-node-*"
+          behavior: "node.sync_with_checkpoints"
+          params:
+            trusted_checkpoint: "from_social_consensus"
+            reject_forks_before_checkpoint: true
+
+      metrics:
+        - fork_from_checkpoint_blocks: "count"
+        - new_nodes_fooled: "count (should be 0)"
+        - new_nodes_protected: "count"
+        - checkpoint_validation_time: "seconds"
+
+      assertions:
+        - fork_detected: true
+        - weak_subjectivity_protected: true
+        - all_new_nodes_on_canonical: true
+
+    - name: "Stake grinding attack (alternative long-range)"
+      duration: "20 min"
+      phases:
+        - name: "Grind for favorable randomness"
+          bots: "attacker-validator-*"
+          behavior: "adversarial.stake_grinding"
+          params:
+            target: "leader_selection"
+            grind_method: "recompute_randomness"
+            attempts: 1000000
+            goal: "maximize_attacker_blocks"
+
+        - name: "Build alternative chain with grinding"
+          bots: "attacker-validator-*"
+          behavior: "adversarial.build_ground_chain"
+          params:
+            start_height: "genesis"
+            use_ground_randomness: true
+            maximize_attacker_blocks: true
+
+        - name: "Broadcast ground chain"
+          bots: "attacker-coordinator"
+          behavior: "adversarial.broadcast_fork"
+          params:
+            fork_chain: "ground_chain"
+            claim_higher_legitimacy: true
+
+      metrics:
+        - grinding_attempts: "count"
+        - attacker_block_ratio: "% in alternative chain"
+        - grinding_detected: "boolean"
+        - grinding_mitigations_active: "boolean"
+
+      assertions:
+        - grinding_detected: true
+        - grinding_mitigations_effective: true
+        - ground_chain_rejected: true
+
+    - name: "Nothing-at-stake attack variant"
+      duration: "15 min"
+      phases:
+        - name: "Sign multiple conflicting forks"
+          bots: "attacker-validator-*"
+          behavior: "adversarial.sign_all_forks"
+          params:
+            fork_count: 10
+            all_from_same_height: 1000
+            broadcast_all: true
+
+        - name: "Monitor slashing"
+          bots: "honest-validator-*"
+          behavior: "validator.detect_equivocation"
+          params:
+            slash_on_detection: true
+
+      metrics:
+        - conflicting_signatures: "count"
+        - equivocation_events: "count"
+        - slashing_events: "count"
+        - slashed_stake: "tokens"
+
+      assertions:
+        - equivocation_detected: true
+        - all_attackers_slashed: true
+        - no_honest_validators_slashed: false_positives = 0
+
+    - name: "Social consensus checkpoint distribution"
+      duration: "10 min"
+      phases:
+        - name: "Honest validators publish checkpoint"
+          bots: "honest-validator-{1-3}"
+          behavior: "validator.publish_checkpoint"
+          params:
+            checkpoint_height: "current - 1000"
+            include_state_root: true
+            sign_checkpoint: true
+
+        - name: "Checkpoint aggregation"
+          bots: "honest-validator-*"
+          behavior: "validator.verify_and_sign_checkpoint"
+          params:
+            threshold: "2/3 of current validators"
+
+        - name: "Checkpoint distribution"
+          behavior: "network.distribute_checkpoint"
+          params:
+            distribution_method: "P2P_gossip"
+            archive_checkpoint: true
+
+      metrics:
+        - checkpoints_published: "count"
+        - checkpoint_signatures: "count"
+        - checkpoint_distribution_time: "seconds"
+
+      assertions:
+        - checkpoint_quorum_reached: true
+        - checkpoint_archived: true
+        - checkpoint_available_to_new_nodes: true
+
+    - name: "Verify long-term protection"
+      duration: "10 min"
+      phases:
+        - name: "Advance canonical chain far ahead"
+          bots: "honest-validator-*"
+          behavior: "validator.produce_blocks"
+          params:
+            block_count: 2000
+
+        - name: "Attacker attempts retroactive fork"
+          bots: "attacker-validator-*"
+          behavior: "adversarial.fork_from_genesis"
+          params:
+            target_height: "current_canonical + 1000"  # Even longer
+            block_production_rate: "maximum"
+
+        - name: "Verify finality prevents acceptance"
+          bots: "honest-validator-*"
+          behavior: "validator.fork_choice"
+          params:
+            respect_finality: true
+            reject_reorg_beyond_finality: true
+
+      metrics:
+        - retroactive_fork_length: "blocks"
+        - finalized_canonical_height: "blocks"
+        - nodes_accepting_retroactive_fork: "count (should be 0)"
+
+      assertions:
+        - finality_respected: true
+        - no_retroactive_reorg: true
+        - canonical_chain_stable: true
+
+  success_criteria:
+    - long_range_attack_attempted: true
+    - long_range_attack_detected: true
+    - no_honest_nodes_fooled: true
+    - weak_subjectivity_effective: true
+    - checkpointing_working: true
+    - equivocation_slashed: true
+    - finality_prevents_deep_reorg: true
+    - new_nodes_protected_by_checkpoints: true
+
+  notes:
+    - "Long-range attacks exploit validators who have unbonded and sold their keys"
+    - "Defense relies on weak subjectivity: social consensus on recent checkpoints"
+    - "Checkpoints must be distributed out-of-band (not just on-chain)"
+    - "New nodes must bootstrap from trusted checkpoint, not just genesis"
+    - "This attack is theoretical for most PoS chains but must be defended against"
+    - "Requires historical data simulation (not feasible on live testnet without archives)"

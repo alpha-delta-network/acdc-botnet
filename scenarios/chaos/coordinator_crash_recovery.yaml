@@ -1,0 +1,385 @@
+scenario:
+  metadata:
+    id: "CHAOS-007"
+    name: "Coordinator Crash Recovery"
+    type: chaos
+    duration: "1 hour"
+
+  description: "Test distributed bot infrastructure resilience to coordinator crashes. Verify state recovery, bot migration, metrics continuity, and scenario resumption."
+
+  setup:
+    distributed_mode: true
+    require_coordinator: true
+    require_workers: 3
+
+    coordinator:
+      checkpointing_enabled: true
+      checkpoint_interval: "30s"
+      state_persistence: true
+
+    workers:
+      - id: "worker-1"
+        max_bots: 100
+        capabilities: ["trader", "user", "governor"]
+
+      - id: "worker-2"
+        max_bots: 100
+        capabilities: ["trader", "user", "governor"]
+
+      - id: "worker-3"
+        max_bots: 100
+        capabilities: ["trader", "user", "validator"]
+
+    bots:
+      - id: "user-{1-200}"
+        role: "general_user"
+        variant: "power"
+        count: 200
+        wallet_ax: 50000000
+
+      - id: "trader-{1-100}"
+        role: "trader"
+        variant: "spot"
+        count: 100
+        wallet_dx: 100000000
+
+  phases:
+    - name: "Establish baseline distributed execution"
+      duration: "10 min"
+      bots: "user-{1-100}"
+      behavior: "transfer.simple"
+      params:
+        transactions_per_min: 100
+
+      concurrent:
+        - bots: "trader-{1-50}"
+          behavior: "trading.spot"
+          params:
+            trades_per_min: 50
+
+      metrics:
+        - bots_per_worker: "distribution"
+        - coordinator_cpu_usage: "%"
+        - coordinator_memory_usage: "MB"
+        - metrics_aggregation_latency: "ms"
+        - checkpoint_creation_time: "ms"
+
+      assertions:
+        - all_workers_active: true
+        - bots_distributed_evenly: true
+        - metrics_flowing: true
+        - checkpoints_created: true
+
+    - name: "Coordinator crash during scenario execution"
+      duration: "5 min"
+      phases:
+        - name: "Ongoing bot operations"
+          bots: "user-*"
+          behavior: "transfer.simple"
+          params:
+            transactions_per_min: 200
+
+        - name: "Crash coordinator (SIGKILL)"
+          chaos_injection:
+            type: "coordinator_crash"
+            timing: "2 min into phase"
+            crash_method: "SIGKILL"  # Immediate, no cleanup
+
+        - name: "Worker behavior during crash"
+          monitor: "worker-*"
+          track:
+            - heartbeat_failures: "count"
+            - local_buffer_growth: "size"
+            - bot_continue_execution: "boolean"
+            - metrics_buffering: "status"
+
+      metrics:
+        - coordinator_downtime: "seconds"
+        - workers_detected_crash_time: "seconds"
+        - bots_affected: "count"
+        - operations_failed: "count"
+        - metrics_buffered: "count"
+
+      assertions:
+        - workers_detected_crash: "within 15s"
+        - bots_continued_execution: true
+        - metrics_buffered_locally: true
+        - no_worker_crashes: true
+
+    - name: "Coordinator restart and state recovery"
+      duration: "5 min"
+      phases:
+        - name: "Restart coordinator"
+          action: "start_coordinator"
+          params:
+            recover_from_checkpoint: true
+            checkpoint_source: "last_valid"
+
+        - name: "State recovery process"
+          monitor: "coordinator"
+          track:
+            - checkpoint_loaded: "boolean"
+            - bots_recovered: "count"
+            - workers_reconnected: "count"
+            - scenario_state_recovered: "boolean"
+
+        - name: "Workers reconnect"
+          monitor: "worker-*"
+          track:
+            - reconnection_attempts: "count"
+            - reconnection_time: "seconds"
+            - buffered_metrics_flushed: "count"
+
+      metrics:
+        - recovery_time: "seconds"
+        - bots_recovered: "count"
+        - workers_reconnected: "count"
+        - metrics_continuity: "boolean"
+        - checkpoint_age: "seconds"
+
+      assertions:
+        - coordinator_recovered: true
+        - all_workers_reconnected: "within 30s"
+        - all_bots_recovered: true
+        - metrics_flushed_successfully: true
+        - scenario_state_consistent: true
+
+    - name: "Resume scenario execution"
+      duration: "10 min"
+      bots: "user-*"
+      behavior: "transfer.simple"
+      params:
+        transactions_per_min: 200
+
+      concurrent:
+        - bots: "trader-*"
+          behavior: "trading.spot"
+          params:
+            trades_per_min: 100
+
+      metrics:
+        - resumed_tps: "transactions/sec"
+        - resumed_bot_count: "count"
+        - resumed_metrics_flow: "boolean"
+        - operations_completed_after_recovery: "count"
+
+      assertions:
+        - scenario_resumed: true
+        - all_bots_operational: true
+        - performance_restored: true
+        - metrics_aggregation_normal: true
+
+    - name: "Coordinator crash with checkpoint corruption"
+      duration: "10 min"
+      phases:
+        - name: "Corrupt checkpoint"
+          chaos_injection:
+            type: "checkpoint_corruption"
+            corruption_type: "partial_data"
+            timing: "before_crash"
+
+        - name: "Crash coordinator"
+          chaos_injection:
+            type: "coordinator_crash"
+            crash_method: "SIGKILL"
+
+        - name: "Restart with corrupted checkpoint"
+          action: "start_coordinator"
+          params:
+            recover_from_checkpoint: true
+            fallback_to_previous: true
+
+      metrics:
+        - checkpoint_corruption_detected: "boolean"
+        - fallback_checkpoint_used: "boolean"
+        - recovery_time_with_fallback: "seconds"
+        - data_loss: "% of operations"
+
+      assertions:
+        - corruption_detected: true
+        - fallback_successful: true
+        - data_loss: "<5%"  # Some loss acceptable with fallback
+        - coordinator_recovered: true
+
+    - name: "Multiple sequential coordinator crashes"
+      duration: "15 min"
+      phases:
+        - name: "Crash 1"
+          chaos_injection:
+            type: "coordinator_crash"
+            timing: "1 min"
+            crash_method: "SIGKILL"
+
+        - name: "Recovery 1"
+          action: "start_coordinator"
+          params:
+            recover_from_checkpoint: true
+
+        - name: "Crash 2"
+          chaos_injection:
+            type: "coordinator_crash"
+            timing: "4 min"
+            crash_method: "SIGTERM"  # Graceful
+
+        - name: "Recovery 2"
+          action: "start_coordinator"
+          params:
+            recover_from_checkpoint: true
+
+        - name: "Crash 3"
+          chaos_injection:
+            type: "coordinator_crash"
+            timing: "7 min"
+            crash_method: "SIGKILL"
+
+        - name: "Recovery 3"
+          action: "start_coordinator"
+          params:
+            recover_from_checkpoint: true
+
+        - name: "Continuous bot operations"
+          bots: "user-{1-100}"
+          behavior: "transfer.simple"
+          params:
+            transactions_per_min: 100
+            continue_on_coordinator_failure: true
+
+      metrics:
+        - total_crashes: "count"
+        - cumulative_downtime: "seconds"
+        - operations_completed_despite_crashes: "count"
+        - operations_failed_due_to_crashes: "count"
+        - average_recovery_time: "seconds"
+
+      assertions:
+        - all_crashes_recovered: true
+        - cumulative_downtime: "<120s"
+        - operation_success_rate: ">90%"
+        - no_permanent_state_loss: true
+
+    - name: "Coordinator crash during bot migration"
+      duration: "10 min"
+      phases:
+        - name: "Trigger worker failure"
+          chaos_injection:
+            type: "worker_crash"
+            target: "worker-1"
+
+        - name: "Start bot migration"
+          action: "migrate_bots"
+          params:
+            from_worker: "worker-1"
+            to_worker: "worker-2"
+
+        - name: "Crash coordinator mid-migration"
+          chaos_injection:
+            type: "coordinator_crash"
+            timing: "during_migration"
+            crash_method: "SIGKILL"
+
+        - name: "Restart coordinator"
+          action: "start_coordinator"
+          params:
+            recover_from_checkpoint: true
+            resume_migration: true
+
+      metrics:
+        - migration_interrupted: "boolean"
+        - bots_in_limbo: "count"
+        - migration_resumed_after_recovery: "boolean"
+        - migration_completion_time: "seconds"
+        - bots_lost: "count (should be 0)"
+
+      assertions:
+        - migration_completed: true
+        - no_bots_lost: true
+        - all_bots_operational_after_migration: true
+
+    - name: "Coordinator crash during metrics aggregation"
+      duration: "5 min"
+      phases:
+        - name: "High metrics volume"
+          bots: "user-*"
+          behavior: "transfer.simple"
+          params:
+            transactions_per_min: 500  # High load
+
+        - name: "Crash during aggregation"
+          chaos_injection:
+            type: "coordinator_crash"
+            timing: "during_metrics_processing"
+            crash_method: "SIGKILL"
+
+        - name: "Restart and recover"
+          action: "start_coordinator"
+          params:
+            recover_from_checkpoint: true
+            reprocess_buffered_metrics: true
+
+      metrics:
+        - metrics_lost: "count"
+        - metrics_recovered_from_buffer: "count"
+        - metrics_continuity_maintained: "boolean"
+        - histogram_consistency: "boolean"
+
+      assertions:
+        - metrics_loss: "<1%"
+        - metrics_continuity: true
+        - histogram_integrity_preserved: true
+
+    - name: "Graceful coordinator shutdown (SIGTERM)"
+      duration: "5 min"
+      phases:
+        - name: "Ongoing operations"
+          bots: "user-{1-100}"
+          behavior: "transfer.simple"
+          params:
+            transactions_per_min: 100
+
+        - name: "Graceful shutdown"
+          chaos_injection:
+            type: "coordinator_shutdown"
+            method: "SIGTERM"  # Allows cleanup
+
+        - name: "Monitor shutdown process"
+          track:
+            - checkpoint_created_on_shutdown: "boolean"
+            - bots_notified: "boolean"
+            - workers_notified: "boolean"
+            - clean_shutdown: "boolean"
+
+        - name: "Restart coordinator"
+          action: "start_coordinator"
+          params:
+            recover_from_checkpoint: true
+
+      metrics:
+        - shutdown_time: "seconds"
+        - checkpoint_created: "boolean"
+        - recovery_time_after_graceful: "seconds"
+        - data_loss: "% (should be 0%)"
+
+      assertions:
+        - clean_shutdown: true
+        - checkpoint_saved: true
+        - no_data_loss: true
+        - fast_recovery: "within 10s"
+
+  success_criteria:
+    - crash_detection: "within 15s"
+    - state_recovery: "successful"
+    - bot_continuity: "no bots lost"
+    - metrics_continuity: ">99%"
+    - scenario_resumption: "successful"
+    - multiple_crash_resilience: true
+    - migration_resilience: true
+    - graceful_shutdown_works: true
+
+  notes:
+    - "Coordinator is single point of failure in current architecture"
+    - "Checkpointing critical for state recovery"
+    - "Workers must buffer metrics locally during coordinator downtime"
+    - "Bot execution should continue even without coordinator (local autonomy)"
+    - "Future: Implement multi-coordinator consensus for HA"
+    - "Graceful shutdown (SIGTERM) should be preferred in production"
+    - "This scenario validates Phase 3 fault tolerance implementation"

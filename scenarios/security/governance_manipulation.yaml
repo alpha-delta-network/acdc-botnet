@@ -188,6 +188,46 @@ scenario:
         - rate_limiting_active: true
         - legitimate_operations_minimally_affected: true
 
+    - name: "Timelock bypass attack"
+      duration: "20 min"
+      phases:
+        - name: "Submit proposal with timelock"
+          bots: "honest-governor-1"
+          behavior: "governance.propose"
+          params:
+            proposal_type: "treasury_allocation"
+            recipient: "dx1treasury..."
+            amount: 5000000
+            timelock_period: "10 min"
+
+        - name: "Attempt early execution (before timelock)"
+          bots: "sybil-attacker-{1-20}"
+          behavior: "governance.bypass_timelock"
+          params:
+            proposal_id: "timelock_proposal"
+            execution_attempts: 50
+            timing: "immediate"  # Try to execute immediately after passing
+            methods: ["timestamp_manipulation", "direct_execution", "admin_override"]
+
+        - name: "Legitimate execution after timelock"
+          bots: "honest-governor-{1-5}"
+          behavior: "governance.execute"
+          params:
+            proposal_id: "timelock_proposal"
+            wait_for_timelock: true
+
+      metrics:
+        - timelock_bypass_attempts: "count"
+        - timelock_bypass_successes: "count (should be 0)"
+        - timelock_bypass_methods: "breakdown"
+        - legitimate_execution_time: "seconds after timelock"
+
+      assertions:
+        - all_bypass_attempts_rejected: true
+        - timelock_enforced: true
+        - execution_only_after_timelock: true
+        - no_timestamp_manipulation: true
+
     - name: "Verify governance integrity"
       duration: "10 min"
       behavior: "verify.governance_security"
@@ -197,6 +237,7 @@ scenario:
         - vote_buying_detected: true
         - dos_mitigated: true
         - malicious_proposals_rejected: true
+        - timelock_bypass_prevented: true
         - governance_state_consistent: true
 
   metrics:

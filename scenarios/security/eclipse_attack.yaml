@@ -1,0 +1,353 @@
+scenario:
+  metadata:
+    id: "SEC-010"
+    name: "Eclipse Attack Simulation"
+    type: security
+    duration: "1.5 hours"
+
+  description: "Test eclipse attacks where attackers isolate victim nodes from honest network by monopolizing their peer connections. Verify peer diversity protections and eclipse detection mechanisms."
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+      network_control: true  # Requires network-level manipulation
+
+    bots:
+      - id: "honest-validator-{1-15}"
+        role: "validator"
+        variant: "honest"
+        count: 15
+
+      - id: "honest-user-{1-50}"
+        role: "general_user"
+        variant: "power"
+        count: 50
+        wallet_ax: 50000000
+
+      - id: "victim-node-{1-5}"
+        role: "validator"
+        variant: "honest"
+        count: 5
+        network_isolation_target: true
+
+      - id: "attacker-sybil-{1-100}"
+        role: "validator"
+        variant: "byzantine"
+        count: 100
+        sybil_mode: true  # Many identities, same controller
+
+      - id: "attacker-coordinator"
+        role: "general_user"
+        variant: "malicious"
+        count: 1
+
+  phases:
+    - name: "Establish healthy network"
+      duration: "10 min"
+      bots: "honest-validator-*"
+      behavior: "validator.produce_blocks"
+      params:
+        block_production_rate: "normal"
+
+      concurrent:
+        - bots: "victim-node-*"
+          behavior: "validator.produce_blocks"
+          params:
+            track_peer_connections: true
+
+        - bots: "honest-user-*"
+          behavior: "transfer.simple"
+          params:
+            transactions_per_min: 100
+
+      metrics:
+        - victim_peer_count: "count per victim"
+        - victim_honest_peers: "count"
+        - network_health: "status"
+        - canonical_chain_height: "blocks"
+
+      assertions:
+        - all_nodes_synced: true
+        - peer_diversity: ">50% honest"
+        - network_healthy: true
+
+    - name: "Eclipse attack phase 1 - Peer table poisoning"
+      duration: "15 min"
+      phases:
+        - name: "Sybil nodes join network"
+          bots: "attacker-sybil-*"
+          behavior: "adversarial.sybil_join"
+          params:
+            join_rate: "10 per minute"
+            target_peer_tables: "victim_nodes"
+            advertise_connectivity: true
+            fake_uptime: "high"
+
+        - name: "Flood victim peer discovery"
+          bots: "attacker-coordinator"
+          behavior: "adversarial.peer_table_pollution"
+          params:
+            targets: "victim-node-*"
+            pollution_method: "address_advertisement"
+            sybil_addresses: "attacker-sybil-*"
+            legitimate_address_ratio: 0.1  # 90% attacker addresses
+
+        - name: "Monitor peer table changes"
+          bots: "victim-node-*"
+          behavior: "node.track_peer_table"
+          params:
+            log_peer_additions: true
+            log_peer_removals: true
+
+      metrics:
+        - sybil_nodes_added: "count"
+        - victim_peer_table_size: "count"
+        - attacker_peer_ratio: "%"
+        - peer_churn_rate: "peers/min"
+
+      assertions:
+        - sybil_nodes_joined: ">50"
+        - peer_tables_polluted: true
+
+    - name: "Eclipse attack phase 2 - Connection monopolization"
+      duration: "20 min"
+      phases:
+        - name: "Establish connections to victims"
+          bots: "attacker-sybil-*"
+          behavior: "adversarial.connect_to_victims"
+          params:
+            targets: "victim-node-*"
+            connection_method: "aggressive"
+            max_connections_per_victim: 8  # Try to fill connection slots
+
+        - name: "Block connections to honest nodes"
+          bots: "attacker-coordinator"
+          behavior: "adversarial.connection_blocking"
+          params:
+            targets: "victim-node-*"
+            block_method: "TCP_RST_injection"  # Simulate at network level
+            block_honest_peers: true
+
+        - name: "Disconnect existing honest peers"
+          bots: "attacker-sybil-*"
+          behavior: "adversarial.peer_eviction"
+          params:
+            targets: "victim-node-*"
+            eviction_method: "connection_flood"
+            target_honest_peers: true
+
+      metrics:
+        - victim_attacker_connections: "count per victim"
+        - victim_honest_connections: "count per victim"
+        - eclipse_success_rate: "% of victims eclipsed"
+        - connection_attempts_blocked: "count"
+
+      assertions:
+        - victims_mostly_connected_to_attackers: true
+        - honest_connection_ratio: "<20%"
+
+    - name: "Eclipse attack phase 3 - Feed fake blockchain"
+      duration: "20 min"
+      phases:
+        - name: "Build alternative blockchain"
+          bots: "attacker-sybil-{1-10}"
+          behavior: "adversarial.build_fake_chain"
+          params:
+            fork_point: "current - 100"
+            target_length: "canonical + 50"  # Longer than canonical
+            include_fake_transactions: true
+            fake_validator_signatures: true
+
+        - name: "Serve fake chain to victims"
+          bots: "attacker-sybil-*"
+          behavior: "adversarial.serve_fake_chain"
+          params:
+            targets: "victim-node-*"
+            fake_chain: "alternative_fork"
+            claim_canonical: true
+            suppress_real_chain: true
+
+        - name: "Monitor victim chain state"
+          bots: "victim-node-*"
+          behavior: "node.track_chain_state"
+          params:
+            log_fork_detection: true
+            log_reorg_events: true
+            log_peer_disagreements: true
+
+      metrics:
+        - victims_on_fake_chain: "count"
+        - victims_on_canonical_chain: "count"
+        - fork_detection_time: "seconds"
+        - chain_disagreements_detected: "count"
+
+      assertions:
+        - fake_chain_served: true
+        - some_victims_affected: true  # May fool some victims
+
+    - name: "Eclipse detection mechanisms"
+      duration: "15 min"
+      phases:
+        - name: "Peer diversity checks"
+          bots: "victim-node-*"
+          behavior: "node.peer_diversity_check"
+          params:
+            check_ip_diversity: true
+            check_asn_diversity: true
+            check_geographic_diversity: true
+            alert_on_low_diversity: true
+
+        - name: "Chain weight comparison"
+          bots: "victim-node-*"
+          behavior: "node.chain_weight_verification"
+          params:
+            query_multiple_peers: true
+            compare_chain_weights: true
+            detect_outliers: true
+
+        - name: "Checkpoint verification"
+          bots: "victim-node-*"
+          behavior: "node.verify_checkpoints"
+          params:
+            trusted_checkpoint_source: "external"
+            compare_against_trusted: true
+            alert_on_mismatch: true
+
+      metrics:
+        - low_diversity_alerts: "count"
+        - chain_weight_mismatches: "count"
+        - checkpoint_mismatches: "count"
+        - eclipse_detected: "boolean per victim"
+
+      assertions:
+        - eclipse_detection_working: true
+        - alerts_generated: ">0"
+        - victims_aware_of_attack: true
+
+    - name: "Eclipse recovery"
+      duration: "15 min"
+      phases:
+        - name: "Discover honest peers via bootstrap"
+          bots: "victim-node-*"
+          behavior: "node.bootstrap_peers"
+          params:
+            bootstrap_method: "hardcoded_seeds"
+            connect_to_seeds: true
+            request_peer_lists: true
+
+        - name: "Aggressive peer discovery"
+          bots: "victim-node-*"
+          behavior: "node.discover_peers"
+          params:
+            discovery_method: "DNS_seeds"
+            connect_to_new_peers: true
+            prioritize_diverse_peers: true
+
+        - name: "Validate chain with honest peers"
+          bots: "victim-node-*"
+          behavior: "node.sync_from_honest_peers"
+          params:
+            query_multiple_sources: true
+            choose_heaviest_valid_chain: true
+            reject_outlier_chains: true
+
+      metrics:
+        - honest_peers_discovered: "count"
+        - victims_reconnected_to_network: "count"
+        - victims_resynced_canonical_chain: "count"
+        - recovery_time: "seconds per victim"
+
+      assertions:
+        - all_victims_recovered: true
+        - victims_on_canonical_chain: true
+        - honest_peer_ratio_restored: ">50%"
+
+    - name: "Eclipse mitigation - Peer selection improvements"
+      duration: "10 min"
+      phases:
+        - name: "Enable IP diversity enforcement"
+          bots: "victim-node-*"
+          behavior: "node.configure_peer_policy"
+          params:
+            max_peers_per_ip: 1
+            max_peers_per_asn: 5
+            require_geographic_diversity: true
+
+        - name: "Enable connection authentication"
+          bots: "victim-node-*"
+          behavior: "node.enable_peer_authentication"
+          params:
+            require_peer_signatures: true
+            maintain_trusted_peer_list: true
+
+        - name: "Retry eclipse attack with mitigations"
+          bots: "attacker-sybil-*"
+          behavior: "adversarial.eclipse_attempt"
+          params:
+            targets: "victim-node-*"
+            connection_method: "aggressive"
+
+      metrics:
+        - mitigation_effectiveness: "%"
+        - eclipse_attempts_blocked: "count"
+        - victims_eclipsed_with_mitigations: "count (should be 0)"
+
+      assertions:
+        - mitigations_effective: true
+        - no_victims_eclipsed: true
+        - peer_diversity_maintained: true
+
+    - name: "Eclipse attack on cross-chain operations"
+      duration: "15 min"
+      phases:
+        - name: "Eclipse victim during cross-chain lock"
+          bots: "victim-node-{1}"
+          behavior: "cross_chain.lock_mint"
+          params:
+            amount: 10000000
+            target_chain: "delta"
+
+        - name: "Feed fake IPC messages"
+          bots: "attacker-sybil-{1-10}"
+          behavior: "adversarial.fake_ipc_messages"
+          params:
+            target: "victim-node-1"
+            fake_message_type: "mint_confirmation"
+            claim_finality: true
+
+        - name: "Verify cross-chain validation"
+          bots: "victim-node-{1}"
+          behavior: "node.verify_ipc_messages"
+          params:
+            require_quorum_signatures: true
+            verify_merkle_proofs: true
+            reject_unverified_messages: true
+
+      metrics:
+        - fake_ipc_messages: "count"
+        - fake_ipc_accepted: "count (should be 0)"
+        - cross_chain_validation_failures: "count"
+
+      assertions:
+        - no_fake_ipc_accepted: true
+        - cross_chain_integrity_preserved: true
+        - victim_detected_fake_messages: true
+
+  success_criteria:
+    - eclipse_attack_attempted: true
+    - eclipse_detection_working: true
+    - eclipse_recovery_successful: true
+    - mitigations_effective: true
+    - peer_diversity_enforced: true
+    - cross_chain_operations_protected: true
+    - no_fake_ipc_accepted: true
+
+  notes:
+    - "Eclipse attacks are network-level and difficult to fully simulate with bots"
+    - "Requires network control (iptables, traffic shaping, connection blocking)"
+    - "Real defense relies on peer diversity and bootstrap node reputation"
+    - "Cross-chain operations especially vulnerable to eclipse attacks"
+    - "Modern P2P networks use multiple defense layers: IP diversity, ASN diversity, authentication"
+    - "This scenario tests detection and recovery more than prevention"
+    - "In production, eclipse attacks require significant resources (many IPs, hosting)"
