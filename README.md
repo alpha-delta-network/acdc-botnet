@@ -2,7 +2,7 @@
 
 Production-grade bot testing infrastructure for the Alpha/Delta dual-chain protocol.
 
-[![CI Status](https://ci.ac-dc.network/api/badges/alpha-delta-network/adnet-testbots/status.svg)](https://ci.ac-dc.network/alpha-delta-network/adnet-testbots)
+[![CI Status](https://ci.ac-dc.network/api/badges/alpha-delta-network/acdc-botnet/status.svg)](https://ci.ac-dc.network/alpha-delta-network/acdc-botnet)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 ## Overview
@@ -24,8 +24,8 @@ AdNet Testbots provides comprehensive functional, security, and chaos testing th
 
 ```bash
 # Clone repository
-git clone https://source.ac-dc.network/alpha-delta-network/adnet-testbots.git
-cd adnet-testbots
+git clone https://source.ac-dc.network/alpha-delta-network/acdc-botnet.git
+cd acdc-botnet
 
 # Build
 cargo build --release
@@ -38,16 +38,16 @@ cargo test --all-features
 
 ```bash
 # Simple transfer test (5 minutes)
-./target/release/adnet-testbots run simple-transfer
+./target/release/acdc-botnet run simple-transfer
 
 # Cross-chain stress test
-./target/release/adnet-testbots run cross-chain-stress --duration 10m
+./target/release/acdc-botnet run cross-chain-stress --duration 10m
 
 # MEV attack simulation
-./target/release/adnet-testbots run mev-extraction
+./target/release/acdc-botnet run mev-extraction
 
 # Peak TPS stress test
-./target/release/adnet-testbots run peak-tps-stress
+./target/release/acdc-botnet run peak-tps-stress
 ```
 
 ### Expected Output
@@ -139,16 +139,16 @@ Run scenarios across multiple machines:
 
 ```bash
 # Terminal 1: Start coordinator
-adnet-testbots coordinator start --bind 0.0.0.0:50051
+acdc-botnet coordinator start --bind 0.0.0.0:50051
 
 # Terminal 2-4: Start workers (on different machines)
-adnet-testbots worker start \
+acdc-botnet worker start \
   --coordinator coordinator.example.com:50051 \
   --max-bots 200 \
   --capabilities trader,user,governor
 
 # Terminal 5: Run distributed scenario
-adnet-testbots run peak-tps-stress \
+acdc-botnet run peak-tps-stress \
   --distributed \
   --workers 3 \
   --total-bots 1000
@@ -191,7 +191,7 @@ Import pre-built dashboard from `grafana/dashboard.json`:
 ### Project Structure
 
 ```
-adnet-testbots/
+acdc-botnet/
 ├── crates/
 │   ├── bot/              # Bot framework
 │   ├── roles/            # Role implementations
@@ -269,11 +269,11 @@ Critical scenarios run on every PR:
 steps:
   - name: test-scenarios
     commands:
-      - adnet-testbots run daily-network-ops --duration 10m
-      - adnet-testbots run cross-chain-stress --duration 5m
-      - adnet-testbots run mev-extraction --duration 5m
-      - adnet-testbots run byzantine-validators --duration 10m
-      - adnet-testbots run peak-tps-stress --duration 5m
+      - acdc-botnet run daily-network-ops --duration 10m
+      - acdc-botnet run cross-chain-stress --duration 5m
+      - acdc-botnet run mev-extraction --duration 5m
+      - acdc-botnet run byzantine-validators --duration 10m
+      - acdc-botnet run peak-tps-stress --duration 5m
 ```
 
 ## Documentation
@@ -325,7 +325,7 @@ steps:
 **Scenario fails with "No workers available":**
 ```bash
 # Start at least one worker before running distributed scenarios
-adnet-testbots worker start --coordinator localhost:50051
+acdc-botnet worker start --coordinator localhost:50051
 ```
 
 **High latency in metrics:**
@@ -359,7 +359,7 @@ Apache-2.0 - see [LICENSE](LICENSE) for details.
 
 ## Contact
 
-- **Repository**: [source.ac-dc.network/alpha-delta-network/adnet-testbots](https://source.ac-dc.network/alpha-delta-network/adnet-testbots)
+- **Repository**: [source.ac-dc.network/alpha-delta-network/acdc-botnet](https://source.ac-dc.network/alpha-delta-network/acdc-botnet)
 - **CI**: [ci.ac-dc.network](https://ci.ac-dc.network)
 - **Documentation**: [docs/](docs/)
 

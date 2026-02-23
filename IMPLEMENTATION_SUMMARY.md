@@ -1,4 +1,4 @@
-# AdNet Testbots - Implementation Summary
+# ACDC Botnet - Implementation Summary
 
 **Status**: ✅ **COMPLETE + ALL GAPS CLOSED**
 **Date**: 2026-02-23
@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-AdNet Testbots is a production-grade bot testing infrastructure for the Alpha/Delta dual-chain protocol. The implementation provides comprehensive functional, security, load, and chaos testing through autonomous bot orchestration with formal correctness guarantees.
+ACDC Botnet is a production-grade bot testing infrastructure for the Alpha/Delta dual-chain protocol. The implementation provides comprehensive functional, security, load, and chaos testing through autonomous bot orchestration with formal correctness guarantees.
 
 **Key Achievements:**
 - ✅ 120+ files created (~17,500+ lines of Rust/YAML code)
@@ -540,7 +540,7 @@ No P4 (nice-to-have) gaps identified. The implementation is feature-complete wit
 
 ## Conclusion
 
-AdNet Testbots represents a **production-grade, formally-verified bot testing infrastructure** with:
+ACDC Botnet represents a **production-grade, formally-verified bot testing infrastructure** with:
 
 - ✅ **~99% MECE coverage** across all dimensions (all P1-P3 gaps closed)
 - ✅ **31 pre-built scenarios** ready for immediate use
