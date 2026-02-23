@@ -1,0 +1,116 @@
+scenario:
+  metadata:
+    id: "FUNC-001"
+    name: "Daily Network Operations"
+    type: functional
+    duration: "24 hours"
+
+  description: "Simulates typical network activity across all operations"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+      adnet_rest: "http://localhost:3000"
+
+    bots:
+      - id: "user-{1-300}"
+        role: "general_user"
+        variant: "casual"
+        count: 300
+        wallet_ax: 1000000
+
+      - id: "trader-{1-100}"
+        role: "trader"
+        variant: "spot"
+        count: 100
+        wallet_ax: 5000000
+        wallet_dx: 10000000
+
+      - id: "validator-{1-20}"
+        role: "validator"
+        variant: "honest"
+        count: 20
+
+      - id: "governor-{1-50}"
+        role: "governor"
+        variant: "active"
+        count: 50
+        wallet_ax: 10000000
+
+      - id: "prover-{1-30}"
+        role: "prover"
+        variant: "standard"
+        count: 30
+
+  phases:
+    - name: "Morning activity (hours 0-8)"
+      duration: "8 hours"
+      bots: "user-*"
+      behavior: "transfer.casual"
+      params:
+        rate_per_bot: 0.5  # 1 tx per 2 minutes
+      concurrent:
+        - bots: "trader-*"
+          behavior: "dex.spot_trade"
+          params:
+            rate_per_bot: 5  # 5 trades/min
+        - bots: "prover-*"
+          behavior: "privacy.shielded_transfer"
+          params:
+            rate_per_bot: 1
+
+    - name: "Business hours spike (hours 8-18)"
+      duration: "10 hours"
+      bots: "user-*"
+      behavior: "transfer.continuous"
+      params:
+        rate_per_bot: 2  # Higher activity
+      concurrent:
+        - bots: "trader-*"
+          behavior: "dex.spot_trade"
+          params:
+            rate_per_bot: 10
+        - bots: "governor-{1-10}"
+          behavior: "governance.propose_and_vote"
+          params:
+            proposals: 3
+            voting_period: "3 hours"
+
+    - name: "Evening activity (hours 18-24)"
+      duration: "6 hours"
+      bots: "user-*"
+      behavior: "transfer.casual"
+      params:
+        rate_per_bot: 1
+      concurrent:
+        - bots: "trader-*"
+          behavior: "dex.spot_trade"
+          params:
+            rate_per_bot: 3
+
+    - name: "Continuous validator operations"
+      duration: "24 hours"
+      bots: "validator-*"
+      behavior: "validator.participate"
+      params:
+        block_proposal_duty: true
+        attestation_duty: true
+        reward_claim_interval: "6 hours"
+
+  metrics:
+    - total_transactions: "count"
+    - average_tps: "rate"
+    - p95_latency: "ms"
+    - governance_proposals: "count"
+    - cross_chain_operations: "count"
+    - validator_uptime: "%"
+    - privacy_operations: "count"
+
+  success_criteria:
+    - average_tps_sustained: ">300 TPS"
+    - p95_latency: "<5 seconds"
+    - zero_consensus_stalls: true
+    - all_proposals_executed: true
+    - validator_uptime: ">99%"
+    - zero_state_inconsistencies: true

@@ -1,0 +1,193 @@
+scenario:
+  metadata:
+    id: "LOAD-004"
+    name: "Sustained Load - 48 Hour Stability Test"
+    type: load
+    duration: "48 hours"
+
+  description: "Long-duration stability test - 500 TPS avg, 1000 cross-chain ops/hour"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "sustained-user-{1-300}"
+        role: "general_user"
+        variant: "casual"
+        count: 300
+        wallet_ax: 50000000
+        wallet_dx: 50000000
+
+  phases:
+    - name: "Hour 0-8: Morning baseline"
+      duration: "8 hours"
+      concurrent:
+        - bots: "sustained-user-{1-200}"
+          behavior: "transfer.continuous"
+          params:
+            rate_per_bot: 2.5  # 200 * 2.5 = 500 TPS
+            amount_range: [1000, 100000]
+            chain: "alpha"
+
+        - bots: "sustained-user-{201-250}"
+          behavior: "cross_chain.lock_mint"
+          params:
+            amount: 100000
+            rate_per_bot: 2  # 50 * 2 * 60 = 6000/hour → adjust to 50 * 0.33 = ~1000/hour
+            rate_per_bot: 0.33
+
+      metrics:
+        - tps_avg_hour: "rate"
+        - cross_chain_ops_hour: "count"
+        - system_memory: "MB"
+        - system_cpu: "%"
+        - block_production_rate: "blocks/min"
+
+      assertions:
+        - tps_sustained: "~500"
+        - cross_chain_sustained: "~1000/hour"
+        - no_memory_leaks: true
+        - cpu_stable: true
+
+    - name: "Hour 8-16: Business hours load"
+      duration: "8 hours"
+      concurrent:
+        - bots: "sustained-user-{1-250}"
+          behavior: "transfer.continuous"
+          params:
+            rate_per_bot: 2  # 250 * 2 = 500 TPS
+
+        - bots: "sustained-user-{251-300}"
+          behavior: "cross_chain.lock_mint"
+          params:
+            rate_per_bot: 0.33  # ~1000/hour
+
+      metrics:
+        - tps_avg_hour: "rate"
+        - p95_latency: "seconds"
+        - mempool_size_avg: "count"
+        - validator_uptime: "%"
+
+      assertions:
+        - consistent_performance: true
+        - no_degradation: true
+
+    - name: "Hour 16-24: Evening ramp-down"
+      duration: "8 hours"
+      concurrent:
+        - bots: "sustained-user-{1-150}"
+          behavior: "transfer.continuous"
+          params:
+            rate_per_bot: 3.33  # 150 * 3.33 = 500 TPS
+
+        - bots: "sustained-user-{151-200}"
+          behavior: "cross_chain.burn_unlock"
+          params:
+            rate_per_bot: 0.33  # ~1000/hour
+
+      metrics:
+        - tps_avg_hour: "rate"
+        - system_stability: "score"
+
+    - name: "Hour 24-32: Second day morning"
+      duration: "8 hours"
+      concurrent:
+        - bots: "sustained-user-{1-200}"
+          behavior: "transfer.continuous"
+          params:
+            rate_per_bot: 2.5  # 500 TPS
+
+        - bots: "sustained-user-{201-250}"
+          behavior: "cross_chain.lock_mint"
+          params:
+            rate_per_bot: 0.33
+
+      metrics:
+        - tps_avg_hour: "rate"
+        - memory_usage_trend: "MB"
+        - storage_growth: "GB"
+        - database_performance: "queries/sec"
+
+      assertions:
+        - no_memory_leaks_24h: true
+        - storage_growth_linear: true
+        - database_responsive: true
+
+    - name: "Hour 32-40: Second day business hours"
+      duration: "8 hours"
+      concurrent:
+        - bots: "sustained-user-*"
+          behavior: "mixed_operations"
+          params:
+            transfer_rate: 1.67  # 300 * 1.67 = 500 TPS
+            cross_chain_ops: "periodic"  # 1000/hour
+            dex_trading: "occasional"
+            privacy_ops: "rare"
+
+      metrics:
+        - mixed_operations_tps: "rate"
+        - operation_mix: "breakdown %"
+        - error_rate_cumulative: "%"
+
+      assertions:
+        - all_operation_types_working: true
+        - error_rate_low: "<0.1%"
+
+    - name: "Hour 40-48: Final stretch"
+      duration: "8 hours"
+      concurrent:
+        - bots: "sustained-user-{1-200}"
+          behavior: "transfer.continuous"
+          params:
+            rate_per_bot: 2.5  # 500 TPS
+
+        - bots: "sustained-user-{201-250}"
+          behavior: "cross_chain.burn_unlock"
+          params:
+            rate_per_bot: 0.33
+
+      metrics:
+        - tps_avg_hour: "rate"
+        - total_transactions_48h: "count"
+        - total_cross_chain_48h: "count"
+        - cumulative_error_rate: "%"
+        - validator_uptime_48h: "%"
+        - consensus_stalls_48h: "count"
+
+      assertions:
+        - sustained_full_48h: true
+        - total_transactions: "~86,400,000"  # 500 TPS * 48h
+        - total_cross_chain: "~48,000"  # 1000/hour * 48h
+        - cumulative_error_rate: "<0.5%"
+        - no_consensus_stalls: true
+        - no_memory_leaks: true
+        - no_performance_degradation: true
+
+  metrics:
+    - total_runtime: "48 hours"
+    - average_tps_48h: "rate"
+    - total_transactions: "count"
+    - total_cross_chain_operations: "count"
+    - cumulative_error_rate: "%"
+    - memory_usage_start: "MB"
+    - memory_usage_end: "MB"
+    - memory_leak_detected: "bool"
+    - storage_growth_total: "GB"
+    - validator_uptime_avg: "%"
+    - consensus_stalls: "count"
+    - p95_latency_48h: "seconds"
+    - system_stability_score: "0-100"
+
+  success_criteria:
+    - sustained_500_tps: true
+    - sustained_1000_cross_chain_per_hour: true
+    - total_transactions: ">80,000,000"
+    - cumulative_error_rate: "<0.5%"
+    - no_memory_leaks: true
+    - memory_growth_acceptable: "<10%"
+    - no_consensus_stalls: true
+    - validator_uptime: ">99%"
+    - p95_latency_consistent: true
+    - system_stable_throughout: true

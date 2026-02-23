@@ -1,0 +1,223 @@
+scenario:
+  metadata:
+    id: "SEC-007"
+    name: "Oracle Manipulation Attack"
+    type: security
+    duration: "45 minutes"
+
+  description: "Price feed manipulation, flash loan attacks, outlier injection for oracles"
+
+  setup:
+    network:
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "honest-oracle-{1-80}"
+        role: "general_user"
+        variant: "power"
+        count: 80
+        wallet_dx: 10000000
+
+      - id: "attacker-oracle-{1-20}"
+        role: "general_user"
+        variant: "power"
+        count: 20
+        wallet_dx: 50000000
+
+      - id: "perp-trader-{1-100}"
+        role: "trader"
+        variant: "perpetual"
+        count: 100
+        wallet_dx: 100000000
+
+  phases:
+    - name: "Baseline oracle operations"
+      duration: "5 min"
+      bots: "honest-oracle-*"
+      behavior: "oracle.submit_price"
+      params:
+        asset: "DX/USD"
+        price_source: "aggregate_exchanges"
+        submission_interval: "10s"
+        price_range: [0.98, 1.02]  # Realistic variance
+
+      metrics:
+        - price_submissions: "count"
+        - median_price: "USD"
+        - price_deviation: "% from median"
+
+      assertions:
+        - oracle_functioning: true
+        - price_stable: true
+
+    - name: "Outlier injection attack"
+      duration: "5 min"
+      concurrent:
+        - bots: "honest-oracle-*"
+          behavior: "oracle.submit_price"
+          params:
+            asset: "DX/USD"
+            price_source: "honest"
+            submission_interval: "10s"
+
+        - bots: "attacker-oracle-{1-10}"
+          behavior: "oracle.submit_outlier"
+          params:
+            asset: "DX/USD"
+            outlier_price: 5.00  # 5x manipulation
+            submission_frequency: "every_submission"
+
+      metrics:
+        - outlier_submissions: "count"
+        - outliers_filtered: "count"
+        - median_price_impact: "% change"
+        - oracle_resilience: "bool"
+
+      assertions:
+        - outliers_detected: true
+        - median_unaffected: true  # Median should resist outliers
+        - oracle_security_working: true
+
+    - name: "Flash loan price manipulation"
+      duration: "10 min"
+      phases:
+        - name: "Flash loan acquisition"
+          bots: "attacker-oracle-1"
+          behavior: "defi.flash_loan"
+          params:
+            amount: 100000000
+            asset: "DX"
+            source: "liquidity_pool"
+
+        - name: "Price manipulation trade"
+          bots: "attacker-oracle-1"
+          behavior: "dex.manipulative_trade"
+          params:
+            pair: "DX/sAX"
+            action: "dump"
+            amount: 100000000
+            target_price_impact: "30%"
+
+        - name: "Submit manipulated price"
+          bots: "attacker-oracle-{1-5}"
+          behavior: "oracle.submit_price"
+          params:
+            asset: "DX/USD"
+            price_source: "manipulated_exchange"
+            submission_timing: "immediate"
+
+        - name: "Exploit perpetuals"
+          bots: "attacker-oracle-1"
+          behavior: "dex.exploit_perp_position"
+          params:
+            position_type: "short"
+            leverage: 10
+            entry_price: "manipulated"
+
+        - name: "Repay flash loan"
+          bots: "attacker-oracle-1"
+          behavior: "defi.repay_flash_loan"
+          params:
+            amount: 100000000
+            profit_extraction: true
+
+      metrics:
+        - flash_loan_amount: "DX"
+        - price_impact: "%"
+        - oracle_median_change: "%"
+        - attacker_profit: "DX"
+        - victims_losses: "DX"
+
+      assertions:
+        - flash_loan_executed: true
+        - price_manipulation_detected: true
+        - oracle_circuit_breaker_triggered: true
+
+    - name: "Sybil oracle attack"
+      duration: "10 min"
+      concurrent:
+        - bots: "honest-oracle-*"
+          behavior: "oracle.submit_price"
+          params:
+            asset: "sAX/USD"
+            price_source: "honest"
+
+        - bots: "attacker-oracle-*"
+          behavior: "oracle.sybil_attack"
+          params:
+            sybil_nodes: 20
+            coordinated_price: 0.50  # 50% underpricing
+            submission_timing: "synchronized"
+
+      metrics:
+        - sybil_oracle_count: 20
+        - honest_oracle_count: 80
+        - median_price_with_sybil: "USD"
+        - sybil_influence: "%"
+
+      assertions:
+        - sybil_detected: true
+        - stake_weighting_reduces_impact: true
+        - median_somewhat_resilient: true  # 20% still influences
+
+    - name: "Timestamp manipulation"
+      duration: "5 min"
+      bots: "attacker-oracle-{1-10}"
+      behavior: "oracle.timestamp_manipulation"
+      params:
+        time_shift: "-1 hour"  # Submit old prices as new
+        stale_price_submission: true
+
+      metrics:
+        - stale_submissions: "count"
+        - stale_rejections: "count"
+        - timestamp_check_effectiveness: "%"
+
+      assertions:
+        - stale_prices_rejected: true
+        - timestamp_validation_working: true
+
+    - name: "Recovery and circuit breaker test"
+      duration: "10 min"
+      behavior: "oracle.circuit_breaker"
+      params:
+        trigger_condition: "price_deviation >30%"
+        recovery_period: "5 min"
+        gradual_recovery: true
+
+      concurrent:
+        - bots: "honest-oracle-*"
+          behavior: "oracle.submit_price"
+          params:
+            asset: "DX/USD"
+            price_source: "honest"
+
+      metrics:
+        - circuit_breaker_activations: "count"
+        - recovery_time: "seconds"
+        - price_stability_restored: "bool"
+
+      assertions:
+        - circuit_breaker_activated: true
+        - perp_trading_halted: true
+        - recovery_successful: true
+
+  metrics:
+    - total_price_submissions: "count"
+    - outlier_submissions: "count"
+    - outlier_rejection_rate: "%"
+    - flash_loan_attacks: "count"
+    - flash_loan_profits: "DX"
+    - sybil_influence_on_median: "%"
+    - stale_price_rejections: "count"
+    - circuit_breaker_activations: "count"
+    - oracle_uptime: "%"
+
+  success_criteria:
+    - outlier_resistance: ">90%"
+    - flash_loan_attacks_detected: true
+    - circuit_breaker_effective: true
+    - sybil_influence_limited: "<20%"
+    - stale_prices_rejected: "100%"
+    - oracle_resilient: true
+    - perpetual_traders_protected: true

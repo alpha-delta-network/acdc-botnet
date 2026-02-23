@@ -1,0 +1,65 @@
+scenario:
+  metadata:
+    id: "LOAD-003"
+    name: "Concurrent Governance Stress"
+    type: load
+    duration: "2 hours"
+
+  description: "100 simultaneous proposals with active voting to test governance scalability"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+
+    bots:
+      - id: "governor-{1-100}"
+        role: "governor"
+        count: 100
+        stake: 1000000
+
+      - id: "voter-{1-100}"
+        role: "governor"
+        count: 100
+        stake: 500000
+
+  phases:
+    - name: "Create 100 proposals"
+      duration: "10 min"
+      bots: "governor-*"
+      behavior: "governance.create_proposal"
+      params:
+        proposal_type: "parameter_update"
+        staggered: true  # Don't all submit at once
+      assertions:
+        - all_proposals_created: true
+
+    - name: "Concurrent voting"
+      duration: "1 hour"
+      bots: "voter-*"
+      behavior: "governance.vote_on_all"
+      params:
+        vote_distribution: "mixed"  # Random yes/no/abstain
+      metrics:
+        - votes_per_second: "rate"
+        - active_proposals: "count"
+
+    - name: "Proposal execution phase"
+      duration: "30 min"
+      behavior: "governance.execute_passed"
+      assertions:
+        - proposals_executed: true
+        - timelocks_enforced: true
+
+    - name: "State consistency check"
+      duration: "20 min"
+      behavior: "query.governance_state"
+      assertions:
+        - all_votes_counted: true
+        - no_double_voting: true
+        - state_consistent: true
+
+  success_criteria:
+    - all_100_proposals_processed: true
+    - vote_integrity_maintained: true
+    - no_governance_deadlocks: true
+    - execution_order_correct: true

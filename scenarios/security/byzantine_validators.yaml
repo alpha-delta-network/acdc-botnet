@@ -1,0 +1,186 @@
+scenario:
+  metadata:
+    id: "SEC-002"
+    name: "Byzantine Validator Attack Simulation"
+    type: security
+    duration: "1 hour"
+
+  description: "Double-signing, equivocation, attestation withholding - 25% Byzantine validators"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+
+    bots:
+      - id: "honest-validator-{1-75}"
+        role: "validator"
+        variant: "honest"
+        count: 75
+        wallet_ax: 100000000
+
+      - id: "byzantine-validator-{1-25}"
+        role: "validator"
+        variant: "byzantine"
+        count: 25
+        wallet_ax: 100000000
+
+      - id: "monitor-{1-100}"
+        role: "general_user"
+        count: 100
+        wallet_ax: 1000000
+
+  phases:
+    - name: "Baseline with all honest validators"
+      duration: "10 min"
+      bots: "honest-validator-*,byzantine-validator-*"
+      behavior: "validator.participate"
+      params:
+        all_honest: true  # Byzantine bots act honestly initially
+
+      concurrent:
+        - bots: "monitor-*"
+          behavior: "transfer.continuous"
+          params:
+            rate_per_bot: 1
+
+      metrics:
+        - baseline_block_time: "seconds"
+        - baseline_finality: "seconds"
+
+      assertions:
+        - consensus_healthy: true
+        - all_blocks_finalized: true
+
+    - name: "Equivocation attack (double-signing)"
+      duration: "10 min"
+      concurrent:
+        - bots: "honest-validator-*"
+          behavior: "validator.participate"
+
+        - bots: "byzantine-validator-{1-10}"
+          behavior: "byzantine.equivocate"
+          params:
+            attack_type: "double_sign"
+            conflicting_votes: 2
+            target_rounds: "all"
+
+        - bots: "monitor-*"
+          behavior: "transfer.continuous"
+
+      metrics:
+        - equivocation_attempts: "count"
+        - equivocation_detections: "count"
+        - slashing_events: "count"
+
+      assertions:
+        - equivocations_detected: ">0"
+        - slashing_triggered: true
+        - consensus_maintained: true
+
+    - name: "Attestation withholding"
+      duration: "10 min"
+      concurrent:
+        - bots: "honest-validator-*"
+          behavior: "validator.participate"
+
+        - bots: "byzantine-validator-{11-18}"
+          behavior: "byzantine.withhold_attestations"
+          params:
+            withhold_rate: "80%"
+            targeted_blocks: "random"
+
+        - bots: "monitor-*"
+          behavior: "transfer.continuous"
+
+      metrics:
+        - attestations_withheld: "count"
+        - finality_delay: "seconds"
+        - block_time_impact: "% increase"
+
+      assertions:
+        - finality_delayed: true
+        - consensus_still_working: true  # <33% Byzantine
+        - withholding_detected: true
+
+    - name: "Invalid block proposals"
+      duration: "10 min"
+      concurrent:
+        - bots: "honest-validator-*"
+          behavior: "validator.participate"
+
+        - bots: "byzantine-validator-{19-25}"
+          behavior: "byzantine.propose_invalid_blocks"
+          params:
+            invalid_types: ["bad_state_root", "invalid_transactions", "wrong_parent"]
+            proposal_frequency: "every_opportunity"
+
+        - bots: "monitor-*"
+          behavior: "transfer.continuous"
+
+      metrics:
+        - invalid_proposals: "count"
+        - rejected_proposals: "count"
+        - validator_ejections: "count"
+
+      assertions:
+        - all_invalid_proposals_rejected: true
+        - no_invalid_blocks_finalized: true
+        - byzantine_validators_flagged: true
+
+    - name: "Combined Byzantine attack"
+      duration: "15 min"
+      concurrent:
+        - bots: "honest-validator-*"
+          behavior: "validator.participate"
+
+        - bots: "byzantine-validator-*"
+          behavior: "byzantine.multi_attack"
+          params:
+            attack_mix:
+              equivocation: "30%"
+              withholding: "40%"
+              invalid_blocks: "30%"
+            coordination: true  # Coordinate timing
+
+        - bots: "monitor-*"
+          behavior: "transfer.continuous"
+
+      metrics:
+        - total_byzantine_actions: "count"
+        - detection_rate: "%"
+        - slashing_rate: "%"
+        - consensus_degradation: "%"
+
+      assertions:
+        - detection_rate: ">90%"
+        - consensus_maintained: true  # 25% < 33% threshold
+        - multiple_ejections: true
+
+    - name: "Verify Byzantine fault tolerance"
+      duration: "5 min"
+      behavior: "verify.bft_properties"
+      assertions:
+        - consensus_never_stalled: true
+        - no_finality_violations: true
+        - all_byzantine_detected: true
+        - honest_validators_unaffected: true
+        - stake_slashed_appropriately: true
+
+  metrics:
+    - total_byzantine_validators: 25
+    - byzantine_actions_attempted: "count"
+    - byzantine_actions_detected: "count"
+    - detection_rate: "%"
+    - slashing_events: "count"
+    - validators_ejected: "count"
+    - consensus_downtime: "seconds"
+    - finality_delay_max: "seconds"
+    - honest_validator_rewards_protected: "bool"
+
+  success_criteria:
+    - byzantine_actions_executed: ">100"  # Attacks work
+    - detection_rate: ">90%"  # But detected
+    - consensus_maintained: true  # BFT holds at 25%
+    - slashing_mechanism_effective: true
+    - no_invalid_blocks_finalized: true
+    - honest_validators_unaffected: true

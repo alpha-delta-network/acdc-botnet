@@ -1,0 +1,145 @@
+scenario:
+  metadata:
+    id: "FUNC-007"
+    name: "Mempool Saturation Testing"
+    type: functional
+    duration: "15 minutes"
+
+  description: "Fill mempool to 10K capacity systematically - 2000 tx/sec inbound"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "tx-generator-{1-1000}"
+        role: "general_user"
+        variant: "power"
+        count: 1000
+        wallet_ax: 5000000
+        wallet_dx: 5000000
+
+  phases:
+    - name: "Baseline mempool state"
+      duration: "1 min"
+      behavior: "monitor.mempool"
+      assertions:
+        - mempool_size: "<100"
+        - mempool_healthy: true
+
+    - name: "Gradual fill - Phase 1 (25% capacity)"
+      duration: "2 min"
+      bots: "tx-generator-{1-250}"
+      behavior: "transfer.burst"
+      params:
+        burst_size: 10
+        burst_interval: "5s"
+        target_mempool_size: 2500
+
+      metrics:
+        - mempool_size: "count"
+        - mempool_fill_rate: "tx/sec"
+        - oldest_tx_age: "seconds"
+
+      assertions:
+        - mempool_accepting_transactions: true
+        - no_mempool_overflow: true
+
+    - name: "Gradual fill - Phase 2 (50% capacity)"
+      duration: "2 min"
+      bots: "tx-generator-{1-500}"
+      behavior: "transfer.burst"
+      params:
+        burst_size: 10
+        burst_interval: "5s"
+        target_mempool_size: 5000
+
+      assertions:
+        - mempool_size: "~5000"
+        - mempool_eviction_policy_active: false
+
+    - name: "Gradual fill - Phase 3 (75% capacity)"
+      duration: "2 min"
+      bots: "tx-generator-{1-750}"
+      behavior: "transfer.burst"
+      params:
+        burst_size: 10
+        burst_interval: "5s"
+        target_mempool_size: 7500
+
+      assertions:
+        - mempool_size: "~7500"
+        - priority_queue_working: true
+
+    - name: "Full saturation (100% capacity)"
+      duration: "3 min"
+      bots: "tx-generator-*"
+      behavior: "transfer.burst"
+      params:
+        burst_size: 10
+        burst_interval: "5s"
+        target_mempool_size: 10000
+
+      metrics:
+        - mempool_size_at_saturation: "count"
+        - eviction_events: "count"
+        - rejected_transactions: "count"
+        - priority_queue_reordering: "count"
+
+      assertions:
+        - mempool_size: "~10000"
+        - eviction_policy_active: true
+        - highest_priority_txs_retained: true
+
+    - name: "Sustained saturation"
+      duration: "3 min"
+      bots: "tx-generator-*"
+      behavior: "transfer.continuous"
+      params:
+        rate_per_bot: 2  # 1000 * 2 = 2000 tx/sec inbound
+
+      metrics:
+        - inbound_tx_rate: "tx/sec"
+        - processed_tx_rate: "tx/sec"
+        - mempool_overflow_handling: "events/sec"
+        - block_production_rate: "blocks/min"
+
+      assertions:
+        - inbound_rate: "~2000 tx/sec"
+        - mempool_capped_at_10k: true
+        - consensus_unaffected: true
+
+    - name: "Mempool drain"
+      duration: "2 min"
+      behavior: "monitor.mempool"
+      params:
+        stop_new_transactions: true
+        monitor_drain_rate: true
+
+      metrics:
+        - drain_rate: "tx/sec"
+        - time_to_empty: "seconds"
+
+      assertions:
+        - mempool_draining: true
+        - all_valid_txs_processed: true
+
+  metrics:
+    - mempool_size_peak: "count"
+    - total_transactions_submitted: "count"
+    - total_transactions_processed: "count"
+    - total_transactions_evicted: "count"
+    - total_transactions_rejected: "count"
+    - average_mempool_age: "seconds"
+    - p95_mempool_age: "seconds"
+    - eviction_policy_activations: "count"
+    - consensus_impact: "none/degraded"
+
+  success_criteria:
+    - mempool_reached_10k: true
+    - sustained_2000_tx_per_sec: true
+    - eviction_policy_worked: true
+    - consensus_maintained: true
+    - all_valid_txs_eventually_processed: true
+    - priority_queue_ordering_correct: true

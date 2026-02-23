@@ -1,0 +1,158 @@
+scenario:
+  metadata:
+    id: "SEC-001"
+    name: "MEV Extraction Attack Simulation"
+    type: security
+    duration: "30 minutes"
+
+  description: "Front-running, sandwich attacks, arbitrage detection"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "victim-trader-{1-300}"
+        role: "trader"
+        variant: "spot"
+        count: 300
+        wallet_dx: 10000000
+
+      - id: "mev-attacker-{1-100}"
+        role: "trader"
+        variant: "mev_searcher"
+        count: 100
+        wallet_dx: 50000000
+
+      - id: "arbitrageur-{1-50}"
+        role: "trader"
+        variant: "arbitrageur"
+        count: 50
+        wallet_dx: 100000000
+
+      - id: "validator-{1-20}"
+        role: "validator"
+        variant: "honest"
+        count: 20
+
+  phases:
+    - name: "Baseline trading without MEV"
+      duration: "5 min"
+      bots: "victim-trader-*"
+      behavior: "dex.spot_trade"
+      params:
+        pairs: ["DX/sAX", "sAX/USD"]
+        rate_per_bot: 1
+        order_size_range: [10000, 100000]
+
+      metrics:
+        - baseline_slippage: "bps"
+        - baseline_execution_price: "avg"
+
+      assertions:
+        - normal_trading_conditions: true
+        - low_slippage: "<10 bps"
+
+    - name: "Front-running attack"
+      duration: "5 min"
+      concurrent:
+        - bots: "victim-trader-{1-100}"
+          behavior: "dex.spot_trade"
+          params:
+            pairs: ["DX/sAX"]
+            rate_per_bot: 1
+            order_size: 100000
+            broadcast_delay: "100ms"  # Detectable window
+
+        - bots: "mev-attacker-{1-30}"
+          behavior: "mev.front_run"
+          params:
+            monitor_mempool: true
+            target_order_size: ">50000"
+            gas_premium: "20%"
+            attack_delay: "<50ms"
+
+      metrics:
+        - front_run_attempts: "count"
+        - front_run_successes: "count"
+        - victim_slippage_increase: "bps"
+        - attacker_profit: "DX"
+
+      assertions:
+        - front_running_detected: true
+        - victim_losses_quantified: true
+
+    - name: "Sandwich attack"
+      duration: "10 min"
+      concurrent:
+        - bots: "victim-trader-{101-200}"
+          behavior: "dex.spot_trade"
+          params:
+            pairs: ["sAX/USD"]
+            rate_per_bot: 0.5
+            order_size_range: [50000, 200000]
+
+        - bots: "mev-attacker-{31-70}"
+          behavior: "mev.sandwich"
+          params:
+            monitor_mempool: true
+            target_order_size: ">50000"
+            front_run_gas_premium: "30%"
+            back_run_gas_premium: "10%"
+
+      metrics:
+        - sandwich_attempts: "count"
+        - sandwich_successes: "count"
+        - victim_effective_slippage: "bps"
+        - attacker_profit_per_sandwich: "DX"
+
+      assertions:
+        - sandwich_attacks_detected: true
+        - anti_mev_measures_triggered: ">0"
+
+    - name: "Arbitrage exploitation"
+      duration: "5 min"
+      concurrent:
+        - bots: "victim-trader-{201-300}"
+          behavior: "dex.spot_trade"
+          params:
+            pairs: ["DX/sAX", "sAX/USD"]
+            rate_per_bot: 1
+
+        - bots: "arbitrageur-*"
+          behavior: "mev.arbitrage"
+          params:
+            pairs: [["DX/sAX", "sAX/USD"], ["DX/USD"]]
+            scan_interval: "1s"
+            min_profit_threshold: "0.5%"
+
+      metrics:
+        - arbitrage_opportunities: "count"
+        - arbitrage_profits: "DX"
+        - price_convergence_time: "seconds"
+
+    - name: "Verify MEV mitigation"
+      duration: "5 min"
+      behavior: "verify.mev_detection"
+      assertions:
+        - mev_attacks_detected: ">80%"
+        - attacker_accounts_flagged: true
+        - victim_losses_minimized: "<5%"
+        - anti_mev_effective: true
+
+  metrics:
+    - total_mev_attempts: "count"
+    - total_mev_successes: "count"
+    - mev_detection_rate: "%"
+    - total_attacker_profit: "DX"
+    - total_victim_losses: "DX"
+    - average_slippage_increase: "bps"
+    - anti_mev_interventions: "count"
+
+  success_criteria:
+    - mev_attacks_successfully_executed: ">50%"  # Attacks work (this is a security test)
+    - mev_detection_rate: ">80%"  # But most are detected
+    - anti_mev_measures_effective: true
+    - victim_losses_quantified: true
+    - mitigation_reduces_losses: ">50%"

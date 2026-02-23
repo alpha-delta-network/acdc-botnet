@@ -35,6 +35,22 @@ struct AggregatorState {
 
     /// Active bots
     active_bots: HashMap<String, i64>,  // bot_id -> last_seen_ms
+
+    /// Bots by role (for Prometheus metrics)
+    bots_by_role: HashMap<String, usize>,
+
+    /// Behavior success tracking
+    behavior_successes: HashMap<String, u64>,
+    behavior_failures: HashMap<String, u64>,
+
+    /// Active scenario name
+    active_scenario: Option<String>,
+
+    /// Scenario progress (0.0 to 1.0)
+    scenario_progress: Option<f64>,
+
+    /// Worker bot counts (distributed mode)
+    workers: HashMap<String, usize>,
 }
 
 impl MetricsAggregator {
@@ -52,6 +68,12 @@ impl MetricsAggregator {
                 window_start_ms: current_time_ms(),
                 window_operations: 0,
                 active_bots: HashMap::new(),
+                bots_by_role: HashMap::new(),
+                behavior_successes: HashMap::new(),
+                behavior_failures: HashMap::new(),
+                active_scenario: None,
+                scenario_progress: None,
+                workers: HashMap::new(),
             })),
         }
     }
@@ -61,16 +83,19 @@ impl MetricsAggregator {
         let mut state = self.state.write();
 
         match event {
-            BotEvent::BotStarted { bot_id, timestamp_ms, .. } => {
+            BotEvent::BotStarted { bot_id, role, timestamp_ms } => {
                 state.active_bots.insert(bot_id.clone(), *timestamp_ms);
+                *state.bots_by_role.entry(role.clone()).or_insert(0) += 1;
             }
 
             BotEvent::BotStopped { bot_id, .. } => {
                 state.active_bots.remove(bot_id);
+                // Note: Not removing from bots_by_role as we want cumulative counts
             }
 
             BotEvent::BehaviorCompleted {
                 bot_id,
+                behavior_id,
                 duration_ms,
                 success,
                 ..
@@ -80,7 +105,10 @@ impl MetricsAggregator {
 
                 *state.bot_operations.entry(bot_id.clone()).or_insert(0) += 1;
 
-                if !success {
+                if *success {
+                    *state.behavior_successes.entry(behavior_id.clone()).or_insert(0) += 1;
+                } else {
+                    *state.behavior_failures.entry(behavior_id.clone()).or_insert(0) += 1;
                     state.total_errors += 1;
                 }
 
@@ -207,6 +235,18 @@ impl MetricsAggregator {
 
     /// Get full metrics snapshot
     pub fn snapshot(&self) -> MetricsSnapshot {
+        let state = self.state.read();
+
+        // Calculate behavior success rates
+        let mut behavior_success_rates = HashMap::new();
+        for (behavior_id, successes) in &state.behavior_successes {
+            let failures = state.behavior_failures.get(behavior_id).unwrap_or(&0);
+            let total = successes + failures;
+            if total > 0 {
+                behavior_success_rates.insert(behavior_id.clone(), *successes as f64 / total as f64);
+            }
+        }
+
         MetricsSnapshot {
             timestamp_ms: current_time_ms(),
             tps: self.tps(),
@@ -217,7 +257,32 @@ impl MetricsAggregator {
             total_operations: self.total_operations(),
             total_errors: self.total_errors(),
             active_bots: self.active_bot_count(),
+            bots_by_role: state.bots_by_role.clone(),
+            behavior_success_rates,
+            active_scenario: state.active_scenario.clone(),
+            scenario_progress: state.scenario_progress,
+            workers: state.workers.clone(),
         }
+    }
+
+    /// Set active scenario (for scenario tracking)
+    pub fn set_active_scenario(&self, name: Option<String>) {
+        self.state.write().active_scenario = name;
+    }
+
+    /// Update scenario progress (0.0 to 1.0)
+    pub fn set_scenario_progress(&self, progress: f64) {
+        self.state.write().scenario_progress = Some(progress.clamp(0.0, 1.0));
+    }
+
+    /// Update worker bot counts (distributed mode)
+    pub fn set_worker_bots(&self, worker_id: String, bot_count: usize) {
+        self.state.write().workers.insert(worker_id, bot_count);
+    }
+
+    /// Remove worker (distributed mode)
+    pub fn remove_worker(&self, worker_id: &str) {
+        self.state.write().workers.remove(worker_id);
     }
 
     /// Reset all metrics
@@ -231,6 +296,9 @@ impl MetricsAggregator {
         state.start_time_ms = current_time_ms();
         state.window_start_ms = current_time_ms();
         state.window_operations = 0;
+        state.bots_by_role.clear();
+        state.behavior_successes.clear();
+        state.behavior_failures.clear();
     }
 }
 
@@ -252,6 +320,11 @@ pub struct MetricsSnapshot {
     pub total_operations: u64,
     pub total_errors: u64,
     pub active_bots: usize,
+    pub bots_by_role: HashMap<String, usize>,
+    pub behavior_success_rates: HashMap<String, f64>,
+    pub active_scenario: Option<String>,
+    pub scenario_progress: Option<f64>,
+    pub workers: HashMap<String, usize>,
 }
 
 fn current_time_ms() -> i64 {

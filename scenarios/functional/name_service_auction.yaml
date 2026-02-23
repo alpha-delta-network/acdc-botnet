@@ -1,0 +1,169 @@
+scenario:
+  metadata:
+    id: "FUNC-008"
+    name: "Name Service Vickrey Auction"
+    type: functional
+    duration: "2 hours"
+
+  description: "Vickrey auction testing for name service - commit, reveal, claim phases"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+
+    bots:
+      - id: "bidder-{1-200}"
+        role: "general_user"
+        variant: "power"
+        count: 200
+        wallet_ax: 10000000
+
+  phases:
+    - name: "Auction creation"
+      duration: "5 min"
+      bots: "bidder-1"
+      behavior: "name_service.create_auction"
+      params:
+        names: ["alice", "bob", "charlie", "delta", "protocol"]
+        auction_duration: "1 hour"
+        reveal_duration: "30 min"
+        minimum_bid: 100000
+
+      assertions:
+        - auctions_created: 5
+        - auction_parameters_correct: true
+
+    - name: "Commit phase - competitive bidding"
+      duration: "30 min"
+      concurrent:
+        - bots: "bidder-{1-50}"
+          behavior: "name_service.commit_bid"
+          params:
+            name: "alice"
+            bid_amount_range: [500000, 5000000]
+            commit_delay_range: [0, 1800]  # Spread over 30 min
+
+        - bots: "bidder-{51-100}"
+          behavior: "name_service.commit_bid"
+          params:
+            name: "bob"
+            bid_amount_range: [300000, 3000000]
+            commit_delay_range: [0, 1800]
+
+        - bots: "bidder-{101-150}"
+          behavior: "name_service.commit_bid"
+          params:
+            name: "charlie"
+            bid_amount_range: [200000, 2000000]
+            commit_delay_range: [0, 1800]
+
+        - bots: "bidder-{151-180}"
+          behavior: "name_service.commit_bid"
+          params:
+            name: "delta"
+            bid_amount_range: [1000000, 10000000]
+            commit_delay_range: [0, 1800]
+
+        - bots: "bidder-{181-200}"
+          behavior: "name_service.commit_bid"
+          params:
+            name: "protocol"
+            bid_amount_range: [800000, 8000000]
+            commit_delay_range: [0, 1800]
+
+      metrics:
+        - total_commits: "count"
+        - commits_per_auction: "breakdown"
+        - commit_distribution_over_time: "histogram"
+
+      assertions:
+        - all_commits_valid: true
+        - commit_hashes_unique: true
+        - no_early_reveals: true
+
+    - name: "Late commit phase"
+      duration: "30 min"
+      bots: "bidder-{1-200}"
+      behavior: "name_service.commit_bid"
+      params:
+        allow_additional_names: ["extra1", "extra2"]
+        bid_amount_range: [100000, 1000000]
+
+      assertions:
+        - late_commits_accepted: true
+        - commit_deadline_enforced: true
+
+    - name: "Reveal phase - coordinated reveals"
+      duration: "20 min"
+      bots: "bidder-*"
+      behavior: "name_service.reveal_bid"
+      params:
+        reveal_all_committed_bids: true
+        reveal_delay_range: [0, 600]  # Spread over 10 min
+
+      metrics:
+        - total_reveals: "count"
+        - reveal_success_rate: "%"
+        - non_revealing_bidders: "count"
+
+      assertions:
+        - all_reveals_valid: true
+        - reveals_match_commits: true
+        - no_premature_reveals: true
+
+    - name: "Remaining reveal time"
+      duration: "10 min"
+      behavior: "monitor.auction_state"
+      assertions:
+        - auction_state_correct: true
+        - winning_bids_calculated: false  # Not yet finalized
+
+    - name: "Auction finalization"
+      duration: "5 min"
+      behavior: "name_service.finalize_auctions"
+      params:
+        auctions_to_finalize: ["alice", "bob", "charlie", "delta", "protocol"]
+
+      assertions:
+        - auctions_finalized: 5
+        - winners_determined: 5
+        - vickrey_pricing_correct: true  # Pay second-highest bid
+
+    - name: "Claim phase"
+      duration: "20 min"
+      behavior: "name_service.claim_names"
+      params:
+        winners_claim: true
+        verify_ownership: true
+
+      assertions:
+        - all_winners_claimed: true
+        - name_ownership_transferred: true
+        - losing_bids_refunded: true
+
+    - name: "Verify auction integrity"
+      duration: "10 min"
+      behavior: "verify.auction_integrity"
+      assertions:
+        - vickrey_pricing_enforced: true
+        - no_bid_manipulation: true
+        - all_funds_accounted: true
+        - name_registry_consistent: true
+
+  metrics:
+    - total_auctions: 5
+    - total_commits: "count"
+    - total_reveals: "count"
+    - reveal_rate: "%"
+    - winning_bids: "amounts"
+    - second_prices_paid: "amounts"
+    - total_refunds: "AX"
+    - non_revealing_penalties: "AX"
+
+  success_criteria:
+    - reveal_rate: ">90%"
+    - vickrey_pricing_correct: true
+    - all_winners_claimed: true
+    - all_losers_refunded: true
+    - zero_manipulation_detected: true
+    - auction_integrity_maintained: true

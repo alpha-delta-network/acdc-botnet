@@ -1,0 +1,227 @@
+scenario:
+  metadata:
+    id: "SEC-008"
+    name: "Replay Attack Simulation"
+    type: security
+    duration: "30 minutes"
+
+  description: "Transaction/attestation replay via nonce reuse, timestamp manipulation"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "victim-{1-100}"
+        role: "general_user"
+        variant: "casual"
+        count: 100
+        wallet_ax: 5000000
+        wallet_dx: 5000000
+
+      - id: "attacker-{1-200}"
+        role: "general_user"
+        variant: "power"
+        count: 200
+        wallet_ax: 1000000
+        wallet_dx: 1000000
+
+  phases:
+    - name: "Capture legitimate transactions"
+      duration: "5 min"
+      bots: "victim-*"
+      behavior: "transfer.continuous"
+      params:
+        rate_per_bot: 1
+        amount_range: [10000, 100000]
+        recipients: "random"
+
+      concurrent:
+        - bots: "attacker-{1-50}"
+          behavior: "monitor.mempool"
+          params:
+            capture_transactions: true
+            target_victims: "victim-*"
+            record_details: ["signature", "nonce", "timestamp", "amount"]
+
+      metrics:
+        - legitimate_transactions: "count"
+        - captured_transactions: "count"
+
+      assertions:
+        - captures_successful: true
+
+    - name: "Direct replay attack (same nonce)"
+      duration: "5 min"
+      bots: "attacker-{1-50}"
+      behavior: "replay.direct"
+      params:
+        replay_captured_transactions: true
+        modify_transaction: false
+        target_chain: "alpha"
+
+      concurrent:
+        - bots: "victim-{1-20}"
+          behavior: "transfer.continuous"
+          params:
+            rate_per_bot: 0.5
+
+      metrics:
+        - direct_replay_attempts: "count"
+        - direct_replay_successes: "count (should be 0)"
+        - nonce_conflict_rejections: "count"
+
+      assertions:
+        - all_replays_rejected: true
+        - nonce_tracking_working: true
+        - no_duplicate_execution: true
+
+    - name: "Modified replay attack (change recipient)"
+      duration: "5 min"
+      bots: "attacker-{51-100}"
+      behavior: "replay.modified"
+      params:
+        replay_captured_transactions: true
+        modifications:
+          recipient: "attacker_address"
+          keep_signature: true  # Invalid: signature won't match
+
+      metrics:
+        - modified_replay_attempts: "count"
+        - modified_replay_successes: "count (should be 0)"
+        - signature_verification_failures: "count"
+
+      assertions:
+        - all_modified_replays_rejected: true
+        - signature_verification_working: true
+        - attacker_gained_nothing: true
+
+    - name: "Cross-chain replay attack"
+      duration: "5 min"
+      phases:
+        - name: "Capture Alpha transaction"
+          bots: "victim-{21-40}"
+          behavior: "transfer.alpha"
+          params:
+            amount: 50000
+            recipients: "random"
+
+        - name: "Replay on Delta chain"
+          bots: "attacker-{101-120}"
+          behavior: "replay.cross_chain"
+          params:
+            source_chain: "alpha"
+            target_chain: "delta"
+            replay_exact_transaction: true
+
+      metrics:
+        - cross_chain_replay_attempts: "count"
+        - cross_chain_replay_successes: "count (should be 0)"
+        - chain_id_mismatch_rejections: "count"
+
+      assertions:
+        - chain_id_protection_working: true
+        - no_cross_chain_replays: true
+
+    - name: "Timestamp manipulation replay"
+      duration: "5 min"
+      bots: "attacker-{121-160}"
+      behavior: "replay.timestamp_manipulation"
+      params:
+        captured_transactions: true
+        timestamp_modifications:
+          - offset: "+1 hour"  # Future timestamp
+          - offset: "-1 hour"  # Past timestamp
+          - set_to: "current"  # Valid timestamp but replayed
+
+      metrics:
+        - timestamp_manipulation_attempts: "count"
+        - future_timestamp_rejections: "count"
+        - past_timestamp_rejections: "count"
+        - nonce_still_prevents_replay: "count"
+
+      assertions:
+        - timestamp_validation_working: true
+        - nonce_is_primary_protection: true
+        - no_timestamp_bypass: true
+
+    - name: "Validator attestation replay"
+      duration: "5 min"
+      setup:
+        additional_bots:
+          - id: "validator-{1-20}"
+            role: "validator"
+            variant: "honest"
+            count: 20
+
+      phases:
+        - name: "Capture attestations"
+          bots: "validator-{1-10}"
+          behavior: "validator.attest"
+          params:
+            block_height: "current"
+
+          concurrent:
+            - bots: "attacker-{161-180}"
+              behavior: "monitor.attestations"
+              params:
+                capture_signatures: true
+
+        - name: "Replay attestations"
+          bots: "attacker-{161-180}"
+          behavior: "replay.attestation"
+          params:
+            replay_captured_attestations: true
+            target_block: "different_height"
+
+      metrics:
+        - attestation_replays: "count"
+        - attestation_replay_rejections: "count"
+        - consensus_disruption: "bool (should be false)"
+
+      assertions:
+        - attestation_replays_rejected: true
+        - block_height_binding_enforced: true
+        - consensus_unaffected: true
+
+    - name: "Batch replay attack (multiple txs)"
+      duration: "5 min"
+      bots: "attacker-{181-200}"
+      behavior: "replay.batch"
+      params:
+        replay_multiple_transactions: true
+        batch_size: 10
+        randomize_order: true
+        parallel_submission: true
+
+      metrics:
+        - batch_replay_attempts: "count"
+        - individual_rejections: "count"
+        - batch_rejection_rate: "%"
+
+      assertions:
+        - all_batch_replays_rejected: true
+        - no_partial_success: true
+        - defense_robust_under_load: true
+
+  metrics:
+    - total_replay_attempts: "count"
+    - total_replay_successes: "count (should be 0)"
+    - nonce_rejections: "count"
+    - signature_rejections: "count"
+    - chain_id_rejections: "count"
+    - timestamp_rejections: "count"
+    - attestation_rejections: "count"
+    - replay_protection_effectiveness: "% (should be 100%)"
+
+  success_criteria:
+    - replay_attempts: ">500"  # Many attacks attempted
+    - replay_successes: "0"  # All prevented
+    - nonce_protection_working: true
+    - signature_protection_working: true
+    - chain_id_protection_working: true
+    - timestamp_validation_working: true
+    - attestation_replay_prevented: true
+    - zero_funds_stolen: true
+    - zero_consensus_disruption: true

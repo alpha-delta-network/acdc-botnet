@@ -1,0 +1,111 @@
+scenario:
+  metadata:
+    id: "CHAOS-003"
+    name: "IPC Latency Injection"
+    type: chaos
+    duration: "45 min"
+
+  description: "Inject 100ms → 30s latency into cross-chain messaging, test timeout handling"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "cross-chain-user-{1-200}"
+        role: "general_user"
+        count: 200
+        wallet_ax: 1000000
+
+  phases:
+    - name: "Baseline cross-chain operations"
+      duration: "5 min"
+      bots: "cross-chain-user-{1-50}"
+      behavior: "cross_chain.lock_mint"
+      params:
+        amount: 10000
+      metrics:
+        - baseline_latency: "record"
+        - success_rate: 1.0
+
+    - name: "Inject 100ms latency"
+      chaos_action: "inject_ipc_latency"
+      params:
+        delay_ms: 100
+      duration: "5 min"
+      bots: "cross-chain-user-{1-50}"
+      behavior: "cross_chain.lock_mint"
+      params:
+        amount: 10000
+      assertions:
+        - operations_still_succeeding: true
+        - latency_increased_by: "~100ms"
+
+    - name: "Inject 1s latency"
+      chaos_action: "inject_ipc_latency"
+      params:
+        delay_ms: 1000
+      duration: "5 min"
+      bots: "cross-chain-user-{1-50}"
+      behavior: "cross_chain.lock_mint"
+      params:
+        amount: 10000
+      assertions:
+        - operations_succeeding_slowly: true
+        - no_timeouts_yet: true
+
+    - name: "Inject 10s latency"
+      chaos_action: "inject_ipc_latency"
+      params:
+        delay_ms: 10000
+      duration: "10 min"
+      bots: "cross-chain-user-{1-50}"
+      behavior: "cross_chain.lock_mint"
+      params:
+        amount: 10000
+        timeout: "15s"
+      assertions:
+        - some_operations_completing: true
+        - user_experience_degraded: true
+
+    - name: "Inject 30s latency (timeout threshold)"
+      chaos_action: "inject_ipc_latency"
+      params:
+        delay_ms: 30000
+      duration: "10 min"
+      bots: "cross-chain-user-{1-50}"
+      behavior: "cross_chain.lock_mint"
+      params:
+        amount: 10000
+        timeout: "20s"
+      assertions:
+        - timeouts_occurring: true
+        - messages_eventually_delivered: true
+        - retry_mechanism_working: true
+
+    - name: "Remove latency injection"
+      chaos_action: "remove_ipc_latency"
+      duration: "5 min"
+      bots: "cross-chain-user-{1-50}"
+      behavior: "cross_chain.lock_mint"
+      params:
+        amount: 10000
+      assertions:
+        - latency_returned_to_baseline: true
+        - full_recovery: true
+
+    - name: "Verify no lost messages"
+      duration: "5 min"
+      behavior: "verify.ipc_message_integrity"
+      assertions:
+        - all_locks_have_mints: true
+        - no_orphaned_messages: true
+        - message_ordering_preserved: true
+
+  success_criteria:
+    - handled_latency_up_to_30s: true
+    - timeout_mechanism_working: true
+    - retry_logic_effective: true
+    - no_message_loss: true
+    - full_recovery_achieved: true

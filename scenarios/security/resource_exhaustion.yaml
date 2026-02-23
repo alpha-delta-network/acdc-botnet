@@ -1,0 +1,208 @@
+scenario:
+  metadata:
+    id: "SEC-006"
+    name: "Resource Exhaustion Attack"
+    type: security
+    duration: "30 minutes"
+
+  description: "Mempool spam, storage bombs, API flooding - 5000 spam/sec"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+      adnet_rest: "http://localhost:3000"
+
+    bots:
+      - id: "attacker-{1-1000}"
+        role: "general_user"
+        variant: "power"
+        count: 1000
+        wallet_ax: 1000000
+        wallet_dx: 1000000
+
+      - id: "legitimate-user-{1-200}"
+        role: "general_user"
+        variant: "casual"
+        count: 200
+        wallet_ax: 5000000
+
+  phases:
+    - name: "Baseline resource usage"
+      duration: "2 min"
+      bots: "legitimate-user-*"
+      behavior: "transfer.casual"
+      params:
+        rate_per_bot: 0.5
+
+      metrics:
+        - baseline_cpu: "%"
+        - baseline_memory: "MB"
+        - baseline_mempool_size: "count"
+        - baseline_api_response_time: "ms"
+
+      assertions:
+        - system_healthy: true
+        - resources_normal: true
+
+    - name: "Mempool spam attack"
+      duration: "5 min"
+      concurrent:
+        - bots: "attacker-{1-500}"
+          behavior: "spam.mempool_flood"
+          params:
+            tx_per_bot_per_sec: 10  # 500 * 10 = 5000 spam/sec
+            tx_type: "valid_but_low_fee"
+            payload_size: "minimal"
+
+        - bots: "legitimate-user-*"
+          behavior: "transfer.continuous"
+          params:
+            rate_per_bot: 1
+            fee: "normal"
+
+      metrics:
+        - spam_tx_submitted: "count"
+        - spam_tx_accepted: "count"
+        - mempool_size: "count"
+        - legitimate_tx_delay: "seconds"
+        - cpu_usage: "%"
+        - memory_usage: "MB"
+
+      assertions:
+        - rate_limiting_active: true
+        - legitimate_tx_prioritized: true
+        - mempool_not_infinite: true
+
+    - name: "Storage bomb attack"
+      duration: "5 min"
+      bots: "attacker-{501-700}"
+      behavior: "spam.storage_bomb"
+      params:
+        attack_type: "large_program_deployment"
+        program_size: "10 MB"
+        deployments_per_bot: 5
+        target: "fill_storage"
+
+      metrics:
+        - storage_bomb_attempts: "count"
+        - storage_bomb_accepted: "count"
+        - storage_bomb_rejected: "count"
+        - storage_usage_increase: "GB"
+        - deployment_cost: "AX per MB"
+
+      assertions:
+        - size_limits_enforced: true
+        - cost_barriers_effective: true
+        - storage_not_exhausted: true
+
+    - name: "API flooding attack"
+      duration: "5 min"
+      concurrent:
+        - bots: "attacker-{701-1000}"
+          behavior: "spam.api_flood"
+          params:
+            requests_per_bot_per_sec: 100  # 300 * 100 = 30,000 req/sec
+            endpoints: ["/block/height/latest", "/peers/all", "/memoryPool/transactions"]
+            request_type: "read_only"
+            distributed: true
+
+        - bots: "legitimate-user-*"
+          behavior: "query.balance"
+          params:
+            rate_per_bot: 0.1
+
+      metrics:
+        - api_requests_total: "count"
+        - api_requests_rate_limited: "count"
+        - api_response_time_p95: "ms"
+        - legitimate_request_success_rate: "%"
+        - cpu_usage: "%"
+
+      assertions:
+        - rate_limiting_active: true
+        - legitimate_requests_served: ">90%"
+        - api_not_crashed: true
+
+    - name: "CPU exhaustion attack (expensive operations)"
+      duration: "5 min"
+      bots: "attacker-{1-300}"
+      behavior: "spam.cpu_burn"
+      params:
+        operation: "signature_verification_spam"
+        invalid_signatures: true
+        rate_per_bot: 50  # 300 * 50 = 15,000 verifications/sec
+
+      concurrent:
+        - bots: "legitimate-user-{1-100}"
+          behavior: "transfer.continuous"
+
+      metrics:
+        - verification_requests: "count"
+        - cpu_usage: "%"
+        - verification_time_p95: "ms"
+        - legitimate_tx_delay: "seconds"
+
+      assertions:
+        - early_validation_active: true
+        - invalid_signatures_rejected_fast: true
+        - cpu_not_exhausted: true
+
+    - name: "Combined resource attack"
+      duration: "8 min"
+      concurrent:
+        - bots: "attacker-{1-400}"
+          behavior: "spam.mempool_flood"
+          params:
+            tx_per_bot_per_sec: 5  # 2000 spam/sec
+
+        - bots: "attacker-{401-600}"
+          behavior: "spam.api_flood"
+          params:
+            requests_per_bot_per_sec: 50  # 10,000 req/sec
+
+        - bots: "attacker-{601-800}"
+          behavior: "spam.cpu_burn"
+          params:
+            operation: "complex_query"
+            rate_per_bot: 10  # 2000 complex/sec
+
+        - bots: "legitimate-user-*"
+          behavior: "transfer.continuous"
+          params:
+            rate_per_bot: 1
+
+      metrics:
+        - total_spam_load: "combined metric"
+        - cpu_usage_peak: "%"
+        - memory_usage_peak: "MB"
+        - mempool_size_peak: "count"
+        - legitimate_success_rate: "%"
+        - system_degradation: "%"
+
+      assertions:
+        - system_survived: true
+        - legitimate_users_minimally_affected: true
+        - no_crash_or_hang: true
+
+  metrics:
+    - total_spam_transactions: "count"
+    - total_spam_api_requests: "count"
+    - total_storage_bombs: "count"
+    - total_cpu_burn_operations: "count"
+    - spam_rejection_rate: "%"
+    - rate_limiting_effectiveness: "%"
+    - legitimate_user_impact: "%"
+    - peak_cpu_usage: "%"
+    - peak_memory_usage: "MB"
+    - peak_mempool_size: "count"
+    - system_uptime: "% (should be 100%)"
+
+  success_criteria:
+    - sustained_5000_spam_per_sec: true  # Attack executed
+    - system_remained_operational: true  # But survived
+    - legitimate_users_served: ">80%"
+    - rate_limiting_effective: true
+    - no_resource_exhaustion: true
+    - no_crashes: true
+    - spam_detection_working: true

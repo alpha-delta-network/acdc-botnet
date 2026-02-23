@@ -1,0 +1,142 @@
+scenario:
+  metadata:
+    id: "FUNC-003"
+    name: "Governance Complete Lifecycle"
+    type: functional
+    duration: "2 hours"
+
+  description: "Complete proposal → vote → timelock → execute flow across multiple proposals"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "governor-{1-100}"
+        role: "governor"
+        variant: "active"
+        count: 100
+        wallet_ax: 20000000
+
+      - id: "passive-governor-{1-50}"
+        role: "governor"
+        variant: "passive"
+        count: 50
+        wallet_ax: 15000000
+
+  phases:
+    - name: "Submit diverse proposals"
+      duration: "15 min"
+      concurrent:
+        - bots: "governor-{1-5}"
+          behavior: "governance.propose"
+          params:
+            proposal_type: "parameter_change"
+            parameter: "block_time"
+            new_value: "4 seconds"
+
+        - bots: "governor-{6-10}"
+          behavior: "governance.propose"
+          params:
+            proposal_type: "treasury_allocation"
+            recipient: "dx1devfund..."
+            amount: 10000000
+
+        - bots: "governor-{11-15}"
+          behavior: "governance.propose"
+          params:
+            proposal_type: "validator_ejection"
+            validator_address: "ax1malicious..."
+
+        - bots: "governor-{16-20}"
+          behavior: "governance.propose"
+          params:
+            proposal_type: "network_upgrade"
+            upgrade_height: 100000
+
+      assertions:
+        - proposals_submitted: ">=15"
+        - all_proposals_valid: true
+
+    - name: "Voting period phase 1 (first 30 min)"
+      duration: "30 min"
+      concurrent:
+        - bots: "governor-{1-80}"
+          behavior: "governance.vote"
+          params:
+            vote_on_all_proposals: true
+            vote_distribution:
+              yes: 60
+              no: 30
+              abstain: 10
+            delay_between_votes: "5 min"
+
+        - bots: "passive-governor-*"
+          behavior: "governance.vote"
+          params:
+            vote_on_all_proposals: true
+            vote: "abstain"
+            delay_between_votes: "10 min"
+
+      metrics:
+        - votes_cast: "count"
+        - voting_power_distribution: "yes/no/abstain %"
+
+    - name: "Late voting phase"
+      duration: "15 min"
+      bots: "governor-{81-100}"
+      behavior: "governance.vote"
+      params:
+        vote_on_all_proposals: true
+        vote: "yes"
+
+    - name: "Timelock period"
+      duration: "30 min"
+      behavior: "monitor.governance"
+      assertions:
+        - proposals_in_timelock: ">0"
+        - timelock_countdown_correct: true
+        - no_early_execution: true
+
+    - name: "Execution phase"
+      duration: "30 min"
+      bots: "governor-{1-10}"
+      behavior: "governance.execute"
+      params:
+        execute_all_passed_proposals: true
+        verify_execution: true
+
+      assertions:
+        - all_passed_proposals_executed: true
+        - parameter_changes_applied: true
+        - treasury_transfers_completed: true
+        - validator_ejections_processed: true
+
+    - name: "Verify governance state"
+      duration: "5 min"
+      behavior: "verify.governance_integrity"
+      assertions:
+        - all_votes_counted: true
+        - quorum_requirements_met: true
+        - timelock_respected: true
+        - execution_successful: true
+        - state_consistent: true
+
+  metrics:
+    - proposals_submitted: "count"
+    - total_votes_cast: "count"
+    - proposals_passed: "count"
+    - proposals_rejected: "count"
+    - proposals_executed: "count"
+    - average_voting_participation: "%"
+    - timelock_duration_actual: "minutes"
+    - execution_success_rate: "%"
+
+  success_criteria:
+    - proposal_submission_rate: "100%"
+    - voting_participation: ">80%"
+    - passed_proposals_executed: "100%"
+    - timelock_enforced: true
+    - no_governance_attacks_detected: true
+    - state_consistency_maintained: true

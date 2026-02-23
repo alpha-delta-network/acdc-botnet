@@ -1,0 +1,66 @@
+scenario:
+  metadata:
+    id: "LOAD-001"
+    name: "Peak TPS Stress Test"
+    type: load
+    duration: "15 min"
+    target_tps: 10000
+
+  description: "Maximum throughput test targeting 10,000+ TPS with ramp-up"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "load-gen-{1-1000}"
+        role: "general_user"
+        count: 1000
+        wallet_ax: 100000
+        wallet_dx: 100000
+
+  phases:
+    - name: "Ramp-up to 1000 TPS"
+      duration: "3 min"
+      bots: "load-gen-{1-100}"
+      behavior: "transfer.continuous"
+      params:
+        rate_per_bot: 10  # 100 bots * 10 = 1000 TPS
+      metrics:
+        - tps_target: 1000
+        - latency_p95_under: 500ms
+
+    - name: "Ramp-up to 5000 TPS"
+      duration: "5 min"
+      bots: "load-gen-{1-500}"
+      behavior: "transfer.continuous"
+      params:
+        rate_per_bot: 10  # 500 bots * 10 = 5000 TPS
+      metrics:
+        - tps_target: 5000
+        - latency_p95_under: 1000ms
+
+    - name: "Peak load 10000 TPS"
+      duration: "5 min"
+      bots: "load-gen-*"
+      behavior: "transfer.continuous"
+      params:
+        rate_per_bot: 10  # 1000 bots * 10 = 10000 TPS
+      metrics:
+        - tps_target: 10000
+        - latency_p95_under: 2000ms
+        - error_rate_under: 0.01  # <1%
+
+    - name: "Ramp-down"
+      duration: "2 min"
+      bots: "load-gen-{1-100}"
+      behavior: "transfer.continuous"
+      params:
+        rate_per_bot: 10
+
+  success_criteria:
+    - sustained_tps_above: 10000
+    - duration_at_peak: "5 min"
+    - error_rate_under: 0.01
+    - no_consensus_stalls: true

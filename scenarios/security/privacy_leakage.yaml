@@ -1,0 +1,181 @@
+scenario:
+  metadata:
+    id: "SEC-005"
+    name: "Privacy Leakage Attack Simulation"
+    type: security
+    duration: "1 hour"
+
+  description: "Timing correlation, amount matching, address clustering to de-anonymize users"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+
+    bots:
+      - id: "privacy-user-{1-300}"
+        role: "general_user"
+        variant: "power"
+        count: 300
+        wallet_ax: 5000000
+
+      - id: "attacker-observer-{1-50}"
+        role: "general_user"
+        variant: "power"
+        count: 50
+        wallet_ax: 1000000
+
+  phases:
+    - name: "Normal shielded activity"
+      duration: "10 min"
+      bots: "privacy-user-*"
+      behavior: "privacy.shielded_transfer"
+      params:
+        amount_range: [10000, 1000000]
+        rate_per_bot: 0.5
+        address_recycling: true
+        timing_randomization: true
+
+      metrics:
+        - shielded_transfers: "count"
+        - unique_addresses: "count"
+
+    - name: "Timing correlation attack"
+      duration: "15 min"
+      concurrent:
+        - bots: "privacy-user-{1-200}"
+          behavior: "privacy.shielded_transfer"
+          params:
+            amount: 100000
+            rate_per_bot: 0.5
+            timing_pattern: "regular_intervals"  # Vulnerable pattern
+
+        - bots: "attacker-observer-*"
+          behavior: "privacy.timing_analysis"
+          params:
+            monitor_blockchain: true
+            record_transaction_times: true
+            record_amounts: true
+            correlation_window: "±5 seconds"
+            clustering_algorithm: "k_means"
+
+      metrics:
+        - observable_transactions: "count"
+        - timing_clusters_found: "count"
+        - linkage_confidence: "% per cluster"
+        - users_de_anonymized: "count"
+
+      assertions:
+        - timing_patterns_detected: true
+        - some_linkage_possible: true  # This is expected vulnerability
+
+    - name: "Amount matching attack"
+      duration: "10 min"
+      phases:
+        - name: "Controlled transfers"
+          bots: "privacy-user-{1-100}"
+          behavior: "privacy.shielded_transfer"
+          params:
+            amount: 123456  # Distinctive amount
+            recipients: "random"
+
+        - name: "Monitor for matching amounts"
+          bots: "attacker-observer-*"
+          behavior: "privacy.amount_correlation"
+          params:
+            monitor_unshielding: true
+            match_threshold: "exact"
+            time_window: "1 hour"
+
+      metrics:
+        - distinctive_amounts: "count"
+        - amount_matches_found: "count"
+        - sender_receiver_linkage: "count"
+
+      assertions:
+        - amount_linkage_possible: true
+        - privacy_reduced_for_distinctive_amounts: true
+
+    - name: "Address clustering attack"
+      duration: "10 min"
+      concurrent:
+        - bots: "privacy-user-{101-200}"
+          behavior: "privacy.shielded_transfer"
+          params:
+            address_reuse: "high"  # Vulnerable: reuse addresses
+            amount_range: [50000, 200000]
+            rate_per_bot: 1
+
+        - bots: "attacker-observer-*"
+          behavior: "privacy.address_clustering"
+          params:
+            heuristics: ["common_input", "change_address", "temporal_proximity"]
+            graph_analysis: true
+
+      metrics:
+        - address_clusters_found: "count"
+        - addresses_per_cluster: "avg"
+        - cluster_confidence: "%"
+
+      assertions:
+        - clustering_successful: true
+        - address_reuse_vulnerable: true
+
+    - name: "Mixer de-anonymization attempt"
+      duration: "15 min"
+      phases:
+        - name: "Users use mixer"
+          bots: "privacy-user-{201-300}"
+          behavior: "privacy.mixing"
+          params:
+            mixing_set_size: 10
+            mixing_rounds: 3
+            amount: 100000
+
+        - name: "Attacker analyzes mixer"
+          bots: "attacker-observer-*"
+          behavior: "privacy.mixer_analysis"
+          params:
+            track_inputs_outputs: true
+            timing_analysis: true
+            amount_flow_analysis: true
+            sybil_nodes_in_mixer: 5  # Attacker controls some mixer nodes
+
+      metrics:
+        - mixer_users: "count"
+        - de_anonymized_users: "count"
+        - de_anonymization_rate: "%"
+        - sybil_effectiveness: "%"
+
+      assertions:
+        - some_de_anonymization_possible: true  # With Sybil nodes
+        - mixer_reduces_linkage: true  # But not perfect
+
+    - name: "Verify privacy properties"
+      duration: "10 min"
+      behavior: "verify.privacy_guarantees"
+      assertions:
+        - zero_plaintext_leakage: true
+        - cryptographic_soundness: true
+        - timing_leakage_quantified: true
+        - amount_leakage_quantified: true
+        - address_clustering_quantified: true
+        - privacy_best_practices_identified: true
+
+  metrics:
+    - total_shielded_transactions: "count"
+    - timing_correlations_found: "count"
+    - amount_correlations_found: "count"
+    - address_clusters_found: "count"
+    - users_partially_de_anonymized: "count"
+    - users_fully_de_anonymized: "count"
+    - privacy_score_avg: "0-100"
+    - best_practices_adherence: "%"
+
+  success_criteria:
+    - timing_leakage_demonstrated: true
+    - amount_leakage_demonstrated: true
+    - address_clustering_demonstrated: true
+    - privacy_not_absolute: true  # Important lesson
+    - best_practices_reduce_leakage: ">50%"
+    - cryptographic_core_unbroken: true
+    - privacy_improvements_identified: true

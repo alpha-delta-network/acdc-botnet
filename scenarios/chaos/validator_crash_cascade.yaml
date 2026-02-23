@@ -1,0 +1,129 @@
+scenario:
+  metadata:
+    id: "CHAOS-002"
+    name: "Validator Crash Cascade"
+    type: chaos
+    duration: "1 hour"
+
+  description: "Sequential crashes up to 40/80 validators (50% down), test recovery"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+
+    validators:
+      - total: 80
+      - crash_target: 40  # 50% of total
+
+    bots:
+      - id: "monitor-{1-100}"
+        role: "general_user"
+        count: 100
+        wallet_ax: 100000
+
+  phases:
+    - name: "Baseline healthy state"
+      duration: "5 min"
+      bots: "monitor-*"
+      behavior: "transfer.continuous"
+      params:
+        rate_per_bot: 1
+      metrics:
+        - baseline_block_time: "record"
+        - baseline_finality: "record"
+
+    - name: "Crash wave 1 (10% validators)"
+      chaos_action: "crash_validators"
+      params:
+        count: 8
+        graceful: false
+      assertions:
+        - validators_down: 8
+        - network_still_operational: true
+      metrics:
+        - block_time_change: "%"
+
+    - name: "Observe 10% down"
+      duration: "5 min"
+      bots: "monitor-*"
+      behavior: "transfer.continuous"
+      assertions:
+        - consensus_working: true
+        - slight_degradation_acceptable: true
+
+    - name: "Crash wave 2 (25% validators total)"
+      chaos_action: "crash_validators"
+      params:
+        count: 12  # 8 + 12 = 20 total
+        graceful: false
+      assertions:
+        - validators_down: 20
+        - network_still_operational: true
+
+    - name: "Observe 25% down"
+      duration: "10 min"
+      bots: "monitor-*"
+      behavior: "transfer.continuous"
+      metrics:
+        - block_time_increase: "%"
+        - finality_delay: "ms"
+
+    - name: "Crash wave 3 (33% validators total - BFT threshold)"
+      chaos_action: "crash_validators"
+      params:
+        count: 7  # 20 + 7 = 27 (33.75%)
+        graceful: false
+      assertions:
+        - validators_down: 27
+        - network_near_threshold: true
+
+    - name: "Observe near BFT threshold"
+      duration: "10 min"
+      bots: "monitor-*"
+      behavior: "transfer.continuous"
+      assertions:
+        - consensus_still_working: true  # Must work with 33% down
+        - significant_degradation: true
+
+    - name: "Crash wave 4 (50% validators total)"
+      chaos_action: "crash_validators"
+      params:
+        count: 13  # 27 + 13 = 40 (50%)
+        graceful: false
+      assertions:
+        - validators_down: 40
+        - network_halt_expected: true
+
+    - name: "Verify network halted"
+      duration: "5 min"
+      behavior: "monitor.consensus"
+      assertions:
+        - new_blocks_stopped: true
+        - consensus_halted: true
+
+    - name: "Begin validator recovery"
+      chaos_action: "restart_validators"
+      params:
+        count: 20  # Bring back to 25% down
+      assertions:
+        - validators_restarting: 20
+
+    - name: "Observe recovery"
+      duration: "10 min"
+      behavior: "monitor.consensus"
+      assertions:
+        - consensus_resumed: true
+        - validators_syncing: true
+
+    - name: "Full recovery"
+      chaos_action: "restart_all_validators"
+      duration: "10 min"
+      assertions:
+        - all_validators_online: true
+        - full_sync_achieved: true
+
+  success_criteria:
+    - network_handled_33_percent_down: true
+    - network_halted_at_50_percent: true  # Expected!
+    - recovery_successful: true
+    - no_state_corruption: true

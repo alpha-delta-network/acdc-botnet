@@ -1,0 +1,95 @@
+scenario:
+  metadata:
+    id: "CHAOS-001"
+    name: "Network Partition Recovery"
+    type: chaos
+    duration: "1 hour"
+
+  description: "Split validators 40/40, test fork resolution and state consistency"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+
+    validators:
+      - partition_a: "validators-{1-40}"
+      - partition_b: "validators-{41-80}"
+
+    bots:
+      - id: "user-{1-150}"
+        role: "general_user"
+        count: 150
+        wallet_ax: 1000000
+
+  phases:
+    - name: "Normal operation baseline"
+      duration: "10 min"
+      bots: "user-*"
+      behavior: "transfer.continuous"
+      params:
+        rate_per_bot: 1
+      metrics:
+        - baseline_tps: "record"
+        - baseline_latency: "record"
+
+    - name: "Inject network partition"
+      chaos_action: "partition_network"
+      params:
+        group_a: "validators-{1-40}"
+        group_b: "validators-{41-80}"
+        isolation: "complete"
+      assertions:
+        - partition_active: true
+        - communication_blocked: true
+
+    - name: "Observe during partition"
+      duration: "20 min"
+      bots: "user-{1-75}"  # Group A users
+      target: "partition_a"
+      behavior: "transfer.continuous"
+      params:
+        rate_per_bot: 1
+      metrics:
+        - partition_a_blocks: "count"
+        - partition_a_tps: "rate"
+
+      concurrent:
+        bots: "user-{76-150}"  # Group B users
+        target: "partition_b"
+        behavior: "transfer.continuous"
+        params:
+          rate_per_bot: 1
+        metrics:
+          - partition_b_blocks: "count"
+          - partition_b_tps: "rate"
+
+      assertions:
+        - both_partitions_progressing: true
+        - fork_detected: true
+
+    - name: "Heal network partition"
+      chaos_action: "heal_partition"
+      assertions:
+        - communication_restored: true
+
+    - name: "Fork resolution"
+      duration: "15 min"
+      behavior: "monitor.consensus"
+      assertions:
+        - fork_resolved: true
+        - canonical_chain_selected: true
+        - longer_chain_wins: true
+
+    - name: "State consistency verification"
+      duration: "15 min"
+      behavior: "verify.state_consistency"
+      assertions:
+        - all_validators_agree: true
+        - no_double_spends: true
+        - transaction_history_consistent: true
+
+  success_criteria:
+    - network_maintained_liveness: true
+    - fork_resolution_successful: true
+    - state_consistency_preserved: true
+    - full_sync_within: "15 min"

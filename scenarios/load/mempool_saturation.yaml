@@ -1,0 +1,57 @@
+scenario:
+  metadata:
+    id: "LOAD-002"
+    name: "Mempool Saturation Test"
+    type: load
+    duration: "15 min"
+
+  description: "Fill mempool to 10K capacity with 2000 tx/sec inbound rate"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+
+    bots:
+      - id: "mempool-filler-{1-200}"
+        role: "general_user"
+        count: 200
+        wallet_ax: 1000000
+
+  phases:
+    - name: "Initial mempool state"
+      behavior: "query.mempool_size"
+      assertions:
+        - mempool_size_under: 100  # Start with clean mempool
+
+    - name: "Rapid transaction submission"
+      duration: "5 min"
+      bots: "mempool-filler-*"
+      behavior: "transfer.burst"
+      params:
+        transactions_per_second: 10  # 200 * 10 = 2000 tx/sec
+      metrics:
+        - mempool_growth_rate: "tx/sec"
+        - mempool_size_current: "count"
+
+    - name: "Sustain at capacity"
+      duration: "5 min"
+      bots: "mempool-filler-*"
+      behavior: "transfer.continuous"
+      params:
+        rate_per_bot: 5  # Slower to maintain capacity
+      assertions:
+        - mempool_near_capacity: true
+        - transaction_inclusion_working: true
+
+    - name: "Mempool drain"
+      duration: "5 min"
+      behavior: "monitor.mempool"
+      assertions:
+        - mempool_processing: true
+        - mempool_size_decreasing: true
+
+  success_criteria:
+    - mempool_reached_capacity: true
+    - no_mempool_crashes: true
+    - transaction_ordering_preserved: true
+    - priority_queue_functional: true

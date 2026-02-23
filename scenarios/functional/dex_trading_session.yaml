@@ -1,0 +1,151 @@
+scenario:
+  metadata:
+    id: "FUNC-004"
+    name: "DEX High-Frequency Trading Session"
+    type: functional
+    duration: "1 hour"
+
+  description: "High-frequency spot + perpetuals trading - 500 orders/sec"
+
+  setup:
+    network:
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "spot-trader-{1-300}"
+        role: "trader"
+        variant: "spot"
+        count: 300
+        wallet_dx: 50000000
+
+      - id: "perp-trader-{1-200}"
+        role: "trader"
+        variant: "perpetual"
+        count: 200
+        wallet_dx: 100000000
+
+      - id: "market-maker-{1-50}"
+        role: "trader"
+        variant: "market_maker"
+        count: 50
+        wallet_dx: 500000000
+
+      - id: "lp-{1-50}"
+        role: "liquidity_provider"
+        variant: "pool_manager"
+        count: 50
+        wallet_dx: 1000000000
+
+  phases:
+    - name: "Liquidity provision setup"
+      duration: "5 min"
+      bots: "lp-*"
+      behavior: "dex.provide_liquidity"
+      params:
+        pairs: ["DX/sAX", "DX/USD", "sAX/USD"]
+        amount_per_pair: 10000000
+        price_range: "±5%"
+
+      assertions:
+        - liquidity_pools_created: true
+        - sufficient_depth: ">1M DX per pair"
+
+    - name: "Market maker initialization"
+      duration: "5 min"
+      bots: "market-maker-*"
+      behavior: "dex.place_orders"
+      params:
+        strategy: "two_sided"
+        spread: "0.2%"
+        order_count_per_bot: 20
+        refresh_interval: "30s"
+
+      assertions:
+        - orderbook_depth: ">100 levels"
+        - spread_maintained: "<0.3%"
+
+    - name: "High-frequency spot trading"
+      duration: "20 min"
+      bots: "spot-trader-*"
+      behavior: "dex.spot_trade"
+      params:
+        pairs: ["DX/sAX", "DX/USD"]
+        rate_per_bot: 1.67  # 300 * 1.67 = 500 orders/sec
+        order_types: ["market", "limit"]
+        order_distribution:
+          market: 40
+          limit: 60
+        cancel_rate: "30%"
+
+      concurrent:
+        - bots: "market-maker-*"
+          behavior: "dex.maintain_quotes"
+          params:
+            refresh_interval: "10s"
+            spread: "0.2%"
+
+      metrics:
+        - spot_orders_per_sec: "rate"
+        - orderbook_depth: "levels"
+        - trade_execution_rate: "%"
+        - average_slippage: "bps"
+
+    - name: "Perpetuals trading session"
+      duration: "20 min"
+      bots: "perp-trader-*"
+      behavior: "dex.perpetual_trade"
+      params:
+        pairs: ["DX-PERP", "sAX-PERP"]
+        rate_per_bot: 2.5  # 200 * 2.5 = 500 orders/sec
+        position_types: ["long", "short"]
+        leverage: [1, 2, 5, 10]
+        liquidation_monitoring: true
+
+      concurrent:
+        - bots: "spot-trader-*"
+          behavior: "dex.spot_trade"
+          params:
+            rate_per_bot: 1.0  # Reduced during perps phase
+
+      metrics:
+        - perp_orders_per_sec: "rate"
+        - open_positions: "count"
+        - liquidations: "count"
+        - funding_rate: "bps per 8h"
+
+    - name: "Mixed trading (spot + perps)"
+      duration: "10 min"
+      concurrent:
+        - bots: "spot-trader-*"
+          behavior: "dex.spot_trade"
+          params:
+            rate_per_bot: 0.83  # 300 * 0.83 = 250 orders/sec
+
+        - bots: "perp-trader-*"
+          behavior: "dex.perpetual_trade"
+          params:
+            rate_per_bot: 1.25  # 200 * 1.25 = 250 orders/sec
+
+      metrics:
+        - total_orders_per_sec: "rate (target 500)"
+        - spot_vs_perp_volume: "ratio"
+
+  metrics:
+    - total_orders_submitted: "count"
+    - orders_executed: "count"
+    - orders_cancelled: "count"
+    - average_orderbook_depth: "levels"
+    - average_spread: "bps"
+    - liquidations_triggered: "count"
+    - trading_volume_spot: "DX"
+    - trading_volume_perp: "DX"
+    - p95_order_latency: "ms"
+
+  success_criteria:
+    - sustained_500_orders_per_sec: true
+    - order_execution_rate: ">90%"
+    - p95_latency: "<200ms"
+    - no_failed_liquidations: true
+    - orderbook_depth_maintained: ">50 levels"
+    - spread_reasonable: "<0.5%"
+    - zero_settlement_failures: true

@@ -1,0 +1,136 @@
+scenario:
+  metadata:
+    id: "CHAOS-004"
+    name: "Byzantine Fault Tolerance Verification"
+    type: chaos
+    duration: "2 hours"
+
+  description: "Comprehensive BFT testing with 10% → 33% Byzantine validators"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+
+    validators:
+      - total: 80
+      - honest: 80
+      - byzantine_max: 26  # 33% (f < n/3 is safe threshold)
+
+    bots:
+      - id: "user-{1-120}"
+        role: "general_user"
+        count: 120
+        wallet_ax: 1000000
+
+  phases:
+    - name: "Baseline with all honest validators"
+      duration: "10 min"
+      bots: "user-*"
+      behavior: "transfer.continuous"
+      params:
+        rate_per_bot: 1
+      metrics:
+        - baseline_tps: "record"
+        - baseline_finality: "record"
+
+    - name: "Introduce 10% Byzantine validators"
+      chaos_action: "convert_to_byzantine"
+      params:
+        count: 8  # 10%
+        behaviors: ["equivocation", "censorship", "invalid_blocks"]
+      assertions:
+        - byzantine_validators: 8
+        - network_operational: true
+
+    - name: "Observe 10% Byzantine"
+      duration: "15 min"
+      bots: "user-*"
+      behavior: "transfer.continuous"
+      assertions:
+        - slashing_events: ">0"
+        - byzantine_detected: true
+        - network_stable: true
+
+    - name: "Increase to 20% Byzantine"
+      chaos_action: "convert_to_byzantine"
+      params:
+        count: 8  # 16 total (20%)
+        behaviors: ["equivocation", "censorship", "invalid_blocks"]
+      assertions:
+        - byzantine_validators: 16
+
+    - name: "Observe 20% Byzantine"
+      duration: "20 min"
+      bots: "user-*"
+      behavior: "transfer.continuous"
+      metrics:
+        - slashing_rate: "events/min"
+        - byzantine_impact: "tps_degradation%"
+      assertions:
+        - network_still_functional: true
+        - degradation_acceptable: true
+
+    - name: "Approach 33% Byzantine (critical threshold)"
+      chaos_action: "convert_to_byzantine"
+      params:
+        count: 10  # 26 total (32.5%)
+        behaviors: ["equivocation", "censorship", "invalid_blocks"]
+      assertions:
+        - byzantine_validators: 26
+        - near_bft_threshold: true
+
+    - name: "Observe near BFT threshold"
+      duration: "30 min"
+      bots: "user-*"
+      behavior: "transfer.continuous"
+      assertions:
+        - consensus_must_work: true  # f < n/3
+        - significant_slashing: true
+        - byzantine_ejected: true
+
+    - name: "Verify safety properties"
+      duration: "10 min"
+      behavior: "verify.consensus_safety"
+      assertions:
+        - no_double_finality: true
+        - fork_resolution_correct: true
+        - byzantine_isolated: true
+
+    - name: "Test 34% Byzantine (should fail)"
+      chaos_action: "convert_to_byzantine"
+      params:
+        count: 1  # 27 total (33.75%)
+        behaviors: ["equivocation"]
+      assertions:
+        - byzantine_validators: 27
+        - consensus_may_halt: true  # f ≥ n/3
+
+    - name: "Observe consensus behavior"
+      duration: "15 min"
+      behavior: "monitor.consensus"
+      assertions:
+        - consensus_degraded_or_halted: true  # Expected at f ≥ n/3
+
+    - name: "Restore honest majority"
+      chaos_action: "restore_honest_validators"
+      params:
+        restore_count: 27  # All Byzantine back to honest
+      duration: "10 min"
+      assertions:
+        - byzantine_validators: 0
+        - consensus_recovering: true
+
+    - name: "Verify full recovery"
+      duration: "10 min"
+      bots: "user-*"
+      behavior: "transfer.continuous"
+      assertions:
+        - network_fully_operational: true
+        - all_validators_synchronized: true
+
+  success_criteria:
+    - bft_threshold_verified: true  # f < n/3 is safe
+    - byzantine_detection_working: true
+    - slashing_mechanism_effective: true
+    - network_safe_up_to_32_percent: true
+    - consensus_fails_at_34_percent: true  # Expected!

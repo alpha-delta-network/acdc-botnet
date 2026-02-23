@@ -1,0 +1,183 @@
+scenario:
+  metadata:
+    id: "SEC-004"
+    name: "Cross-Chain Double-Spend Attack"
+    type: security
+    duration: "30 minutes"
+
+  description: "Concurrent locks, replay attacks, race conditions across Alpha/Delta chains"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "attacker-{1-200}"
+        role: "general_user"
+        variant: "power"
+        count: 200
+        wallet_ax: 10000000
+        wallet_dx: 10000000
+
+      - id: "honest-user-{1-100}"
+        role: "general_user"
+        variant: "casual"
+        count: 100
+        wallet_ax: 5000000
+
+  phases:
+    - name: "Baseline cross-chain operations"
+      duration: "5 min"
+      bots: "honest-user-*"
+      behavior: "cross_chain.lock_mint"
+      params:
+        amount: 100000
+        rate_per_bot: 0.2
+
+      metrics:
+        - baseline_lock_mint_success: "%"
+        - baseline_atomicity: "100%"
+
+      assertions:
+        - all_operations_atomic: true
+        - zero_double_spends: true
+
+    - name: "Concurrent lock attack (same funds)"
+      duration: "5 min"
+      bots: "attacker-{1-50}"
+      behavior: "cross_chain.concurrent_locks"
+      params:
+        lock_attempts_per_bot: 5
+        same_funds: true  # Try to lock same AX multiple times
+        target_amount: 500000
+        concurrent_requests: 5
+        race_window: "100ms"
+
+      metrics:
+        - concurrent_lock_attempts: "count"
+        - successful_locks: "count"
+        - rejected_locks: "count"
+        - double_spend_attempts: "count"
+
+      assertions:
+        - at_most_one_lock_per_funds: true
+        - double_spend_prevented: true
+        - rejection_reason_valid: true
+
+    - name: "Replay attack simulation"
+      duration: "5 min"
+      phases:
+        - name: "Create valid lock transaction"
+          bots: "attacker-1"
+          behavior: "cross_chain.lock_mint"
+          params:
+            amount: 1000000
+            capture_transaction: true
+
+        - name: "Replay captured transaction"
+          bots: "attacker-{2-20}"
+          behavior: "cross_chain.replay_transaction"
+          params:
+            replay_count: 10
+            modify_nonce: false
+            modify_timestamp: false
+            target_chain: "alpha"
+
+      metrics:
+        - replay_attempts: "count"
+        - replay_successes: "count (should be 0)"
+        - replay_rejections: "count"
+
+      assertions:
+        - all_replays_rejected: true
+        - nonce_checking_working: true
+        - no_duplicate_mints: true
+
+    - name: "Race condition exploitation"
+      duration: "5 min"
+      bots: "attacker-{21-100}"
+      behavior: "cross_chain.race_exploit"
+      params:
+        attack_pattern: "lock_then_transfer"
+        steps:
+          - lock_ax: 500000
+          - immediate_alpha_transfer: 500000  # Transfer before lock finalizes
+          - expect_mint_on_delta: true
+        timing: "tight"  # Minimal delay between steps
+
+      metrics:
+        - race_attempts: "count"
+        - race_successes: "count (should be 0)"
+        - caught_by_finality_check: "count"
+
+      assertions:
+        - finality_enforced: true
+        - no_double_spending: true
+        - all_races_detected: true
+
+    - name: "Merkle proof forgery"
+      duration: "5 min"
+      bots: "attacker-{101-130}"
+      behavior: "cross_chain.forge_proof"
+      params:
+        forge_types: ["fake_lock", "modified_amount", "wrong_recipient"]
+        attempts_per_bot: 3
+
+      metrics:
+        - forgery_attempts: "count"
+        - forgery_successes: "count (should be 0)"
+        - verification_failures: "count"
+
+      assertions:
+        - all_forgeries_rejected: true
+        - cryptographic_verification_working: true
+        - no_unauthorized_mints: true
+
+    - name: "Finality bypass attempt"
+      duration: "5 min"
+      bots: "attacker-{131-180}"
+      behavior: "cross_chain.bypass_finality"
+      params:
+        attack_pattern: "claim_before_finalized"
+        finality_requirement: "3 blocks"
+        claim_after: "1 block"  # Too early
+
+      metrics:
+        - premature_claim_attempts: "count"
+        - premature_claims_rejected: "count"
+
+      assertions:
+        - finality_enforced_strictly: true
+        - no_premature_mints: true
+
+    - name: "Verify cross-chain security"
+      duration: "5 min"
+      behavior: "verify.cross_chain_atomicity"
+      assertions:
+        - zero_double_spends: true
+        - all_locks_have_unique_mints: true
+        - all_burns_have_unique_unlocks: true
+        - replay_protection_working: true
+        - finality_requirement_enforced: true
+        - cryptographic_proofs_valid: true
+        - total_ax_conserved: true
+
+  metrics:
+    - total_attack_attempts: "count"
+    - attack_successes: "count (should be 0)"
+    - concurrent_lock_rejections: "count"
+    - replay_rejections: "count"
+    - race_condition_catches: "count"
+    - proof_forgery_rejections: "count"
+    - finality_bypass_rejections: "count"
+    - detection_rate: "%"
+
+  success_criteria:
+    - attack_attempts: ">500"  # Many attacks attempted
+    - attack_successes: "0"  # But all prevented
+    - detection_rate: "100%"
+    - zero_double_spends: true
+    - atomicity_maintained: true
+    - replay_protection_working: true
+    - finality_enforced: true

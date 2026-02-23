@@ -1,0 +1,96 @@
+scenario:
+  metadata:
+    id: "FUNC-002"
+    name: "Cross-Chain Operations Stress Test"
+    type: functional
+    duration: "30 minutes"
+
+  description: "Heavy lock/mint and burn/unlock operations - 100 locks/sec, 100 burns/sec"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "cross-chain-user-{1-800}"
+        role: "general_user"
+        variant: "power"
+        count: 800
+        wallet_ax: 10000000
+        wallet_dx: 10000000
+
+  phases:
+    - name: "Ramp-up lock/mint operations"
+      duration: "5 min"
+      description: "Gradually increase to 100 locks/sec"
+      phases:
+        - bots: "cross-chain-user-{1-200}"
+          duration: "1 min"
+          behavior: "cross_chain.lock_mint"
+          params:
+            amount: 100000
+            rate_per_bot: 0.5  # 100 bots * 0.5 = 50 locks/sec
+
+        - bots: "cross-chain-user-{1-400}"
+          duration: "2 min"
+          behavior: "cross_chain.lock_mint"
+          params:
+            amount: 100000
+            rate_per_bot: 0.375  # 400 * 0.375 = 150 locks/sec (ramp)
+
+        - bots: "cross-chain-user-{1-600}"
+          duration: "2 min"
+          behavior: "cross_chain.lock_mint"
+          params:
+            amount: 100000
+            rate_per_bot: 0.167  # 600 * 0.167 = 100 locks/sec
+
+    - name: "Sustained lock/mint operations"
+      duration: "10 min"
+      bots: "cross-chain-user-{1-600}"
+      behavior: "cross_chain.lock_mint"
+      params:
+        amount: 100000
+        rate_per_bot: 0.167  # 100 locks/sec sustained
+
+    - name: "Bidirectional stress (lock + burn)"
+      duration: "10 min"
+      concurrent:
+        - bots: "cross-chain-user-{1-400}"
+          behavior: "cross_chain.lock_mint"
+          params:
+            amount: 100000
+            rate_per_bot: 0.25  # 100 locks/sec
+        - bots: "cross-chain-user-{401-800}"
+          behavior: "cross_chain.burn_unlock"
+          params:
+            amount: 100000
+            rate_per_bot: 0.25  # 100 burns/sec
+
+    - name: "Verify atomicity under stress"
+      duration: "5 min"
+      behavior: "verify.cross_chain_atomicity"
+      assertions:
+        - all_locks_have_mints: true
+        - all_burns_have_unlocks: true
+        - no_orphaned_messages: true
+        - total_ax_conserved: true
+
+  metrics:
+    - lock_operations: "count"
+    - mint_operations: "count"
+    - burn_operations: "count"
+    - unlock_operations: "count"
+    - cross_chain_latency_p95: "seconds"
+    - atomicity_violations: "count (should be 0)"
+    - message_ordering_violations: "count (should be 0)"
+    - ipc_message_rate: "messages/sec"
+
+  success_criteria:
+    - sustained_100_locks_per_sec: true
+    - sustained_100_burns_per_sec: true
+    - zero_atomicity_violations: true
+    - p95_cross_chain_latency: "<30 seconds"
+    - zero_message_ordering_violations: true
+    - all_operations_finalized: true

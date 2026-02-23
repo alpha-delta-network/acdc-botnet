@@ -1,0 +1,174 @@
+scenario:
+  metadata:
+    id: "FUNC-006"
+    name: "Validator Lifecycle Operations"
+    type: functional
+    duration: "4 hours"
+
+  description: "Complete validator lifecycle: registration, block production, rewards, ejection"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "validator-{1-80}"
+        role: "validator"
+        variant: "honest"
+        count: 80
+        wallet_ax: 100000000  # Sufficient for staking
+
+      - id: "new-validator-{1-20}"
+        role: "validator"
+        variant: "honest"
+        count: 20
+        wallet_ax: 100000000
+
+      - id: "lazy-validator-{1-10}"
+        role: "validator"
+        variant: "lazy"
+        count: 10
+        wallet_ax: 100000000
+
+      - id: "monitor-{1-10}"
+        role: "general_user"
+        count: 10
+        wallet_ax: 1000000
+
+  phases:
+    - name: "Initial validator set active"
+      duration: "30 min"
+      bots: "validator-{1-80}"
+      behavior: "validator.participate"
+      params:
+        block_proposal_duty: true
+        attestation_duty: true
+        uptime_target: 100
+
+      concurrent:
+        - bots: "monitor-*"
+          behavior: "transfer.continuous"
+          params:
+            rate_per_bot: 1  # Generate load
+
+      metrics:
+        - blocks_produced: "count"
+        - attestations_signed: "count"
+        - validator_uptime: "%"
+        - missed_proposals: "count"
+        - missed_attestations: "count"
+
+      assertions:
+        - consensus_healthy: true
+        - block_time_consistent: true
+        - all_validators_participating: true
+
+    - name: "New validator registration"
+      duration: "30 min"
+      bots: "new-validator-*"
+      behavior: "validator.register"
+      params:
+        stake_amount: 50000000
+        commission_rate: "5%"
+        wait_for_activation: true
+
+      assertions:
+        - registrations_successful: 20
+        - validators_activated: 20
+        - committee_updated: true
+
+    - name: "Mixed validator set operation"
+      duration: "1 hour"
+      concurrent:
+        - bots: "validator-{1-80}"
+          behavior: "validator.participate"
+          params:
+            block_proposal_duty: true
+            attestation_duty: true
+
+        - bots: "new-validator-*"
+          behavior: "validator.participate"
+          params:
+            block_proposal_duty: true
+            attestation_duty: true
+
+        - bots: "lazy-validator-*"
+          behavior: "validator.participate"
+          params:
+            block_proposal_duty: true
+            attestation_duty: true
+            uptime_target: 70  # Intentionally lazy
+
+        - bots: "monitor-*"
+          behavior: "transfer.continuous"
+          params:
+            rate_per_bot: 2
+
+      metrics:
+        - total_validators: 110
+        - active_validators: "count"
+        - lazy_validators_detected: "count"
+        - slashing_events: "count"
+
+    - name: "Rewards claiming"
+      duration: "30 min"
+      bots: "validator-*,new-validator-*"
+      behavior: "validator.claim_rewards"
+      params:
+        claim_interval: "5 min"
+        verify_reward_amount: true
+
+      assertions:
+        - all_rewards_claimed: true
+        - reward_distribution_correct: true
+        - commission_calculated_correctly: true
+
+    - name: "Lazy validator ejection"
+      duration: "1 hour"
+      behavior: "monitor.validator_performance"
+      params:
+        ejection_threshold: "70% uptime"
+        observation_period: "1 hour"
+
+      concurrent:
+        - bots: "validator-{1-80},new-validator-*"
+          behavior: "validator.participate"
+
+        - bots: "lazy-validator-*"
+          behavior: "validator.participate"
+          params:
+            uptime_target: 60  # Even worse
+
+      assertions:
+        - lazy_validators_flagged: 10
+        - ejection_proposals_created: 10
+
+    - name: "Verify ejection and recovery"
+      duration: "30 min"
+      behavior: "verify.validator_set"
+      assertions:
+        - lazy_validators_ejected: 10
+        - active_validators: 100
+        - consensus_unaffected: true
+        - all_stakes_returned: true
+
+  metrics:
+    - total_validators_registered: "count"
+    - total_validators_active: "count"
+    - total_validators_ejected: "count"
+    - total_blocks_produced: "count"
+    - total_attestations_signed: "count"
+    - total_rewards_distributed: "AX"
+    - average_validator_uptime: "%"
+    - slashing_events: "count"
+    - missed_proposals_total: "count"
+    - missed_attestations_total: "count"
+
+  success_criteria:
+    - registration_success_rate: "100%"
+    - validator_uptime_avg: ">95%"
+    - rewards_distribution_accurate: true
+    - lazy_validators_ejected: true
+    - consensus_maintained_throughout: true
+    - zero_unintended_slashing: true

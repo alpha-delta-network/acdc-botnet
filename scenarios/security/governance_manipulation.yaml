@@ -1,0 +1,220 @@
+scenario:
+  metadata:
+    id: "SEC-003"
+    name: "Governance Manipulation Attack"
+    type: security
+    duration: "2 hours"
+
+  description: "Sybil wallets, vote buying, proposal spam, DoS attempts"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+
+    bots:
+      - id: "honest-governor-{1-200}"
+        role: "governor"
+        variant: "active"
+        count: 200
+        wallet_ax: 20000000
+
+      - id: "sybil-attacker-{1-100}"
+        role: "governor"
+        variant: "malicious"
+        count: 100
+        wallet_ax: 10000000  # Lower stake per Sybil
+
+  phases:
+    - name: "Normal governance baseline"
+      duration: "15 min"
+      bots: "honest-governor-{1-50}"
+      behavior: "governance.propose_and_vote"
+      params:
+        proposals: 5
+        voting_period: "10 min"
+        proposal_types: ["parameter_change", "treasury", "upgrade"]
+
+      metrics:
+        - baseline_proposal_rate: "proposals/hour"
+        - baseline_voting_participation: "%"
+
+      assertions:
+        - normal_governance_functioning: true
+        - proposals_passing: ">60%"
+
+    - name: "Sybil attack - wallet creation"
+      duration: "10 min"
+      bots: "sybil-attacker-*"
+      behavior: "governance.sybil_setup"
+      params:
+        wallets_per_attacker: 5  # 100 * 5 = 500 Sybil wallets
+        stake_distribution: "even"
+        registration_delay: "random"
+
+      assertions:
+        - sybil_wallets_created: 500
+        - stake_distributed: true
+        - registrations_accepted: true
+
+    - name: "Proposal spam attack"
+      duration: "20 min"
+      concurrent:
+        - bots: "sybil-attacker-{1-50}"
+          behavior: "governance.spam_proposals"
+          params:
+            proposals_per_bot: 3
+            proposal_quality: "low"
+            submission_interval: "1 min"
+            proposal_types: ["trivial", "duplicate", "malformed"]
+
+        - bots: "honest-governor-{51-100}"
+          behavior: "governance.vote"
+          params:
+            vote_on_legitimate_only: true
+
+      metrics:
+        - spam_proposals_submitted: "count"
+        - spam_proposals_rejected: "count"
+        - governance_throughput_impact: "%"
+
+      assertions:
+        - spam_detected: ">80%"
+        - spam_filtering_active: true
+        - legitimate_proposals_unaffected: true
+
+    - name: "Vote buying simulation"
+      duration: "30 min"
+      phases:
+        - name: "Submit contentious proposal"
+          bots: "sybil-attacker-1"
+          behavior: "governance.propose"
+          params:
+            proposal_type: "treasury_allocation"
+            recipient: "attacker_controlled"
+            amount: 50000000
+
+        - name: "Vote buying offers"
+          bots: "sybil-attacker-{2-20}"
+          behavior: "governance.vote_buying"
+          params:
+            target_governors: "honest-governor-{101-150}"
+            bribe_amount: 100000  # Per vote
+            communication_channel: "on_chain_messages"
+
+        - name: "Honest voting"
+          bots: "honest-governor-{1-100}"
+          behavior: "governance.vote"
+          params:
+            proposal_id: "contentious"
+            vote_based_on_merit: true
+
+        - name: "Bribed voting (some accept)"
+          bots: "honest-governor-{101-120}"
+          behavior: "governance.vote"
+          params:
+            proposal_id: "contentious"
+            accept_bribe: "30%"  # 30% succumb
+            vote: "yes"
+
+      metrics:
+        - vote_buying_attempts: "count"
+        - bribe_acceptance_rate: "%"
+        - proposal_vote_distribution: "yes/no/abstain"
+
+      assertions:
+        - vote_buying_detected: true
+        - bribed_voters_flagged: true
+        - proposal_outcome_tracked: true
+
+    - name: "Coordinated voting attack"
+      duration: "20 min"
+      phases:
+        - name: "Submit attacker proposal"
+          bots: "sybil-attacker-{21-25}"
+          behavior: "governance.propose"
+          params:
+            proposal_type: "malicious_upgrade"
+            upgrade_details: "backdoor_insertion"
+
+        - name: "Sybil voting flood"
+          bots: "sybil-attacker-*"
+          behavior: "governance.coordinated_vote"
+          params:
+            proposal_id: "malicious"
+            vote: "yes"
+            timing: "last_minute"  # Vote flood at deadline
+
+        - name: "Honest defense"
+          bots: "honest-governor-*"
+          behavior: "governance.vote"
+          params:
+            proposal_id: "malicious"
+            vote: "no"
+            early_voting: true
+
+      metrics:
+        - sybil_voting_power: "total stake"
+        - honest_voting_power: "total stake"
+        - proposal_result: "pass/fail"
+        - vote_timing_distribution: "histogram"
+
+      assertions:
+        - sybil_detected: true
+        - stake_weighted_properly: true
+        - honest_majority_wins: true  # Should fail despite Sybil attack
+
+    - name: "Governance DoS attack"
+      duration: "15 min"
+      bots: "sybil-attacker-*"
+      behavior: "governance.dos"
+      params:
+        attack_type: "vote_spam"
+        votes_per_bot_per_min: 100
+        target: "overload_vote_tallying"
+
+      concurrent:
+        - bots: "honest-governor-*"
+          behavior: "governance.vote"
+          params:
+            legitimate_voting: true
+
+      metrics:
+        - dos_requests: "count"
+        - governance_response_time: "ms"
+        - legitimate_votes_delayed: "count"
+
+      assertions:
+        - dos_detected: true
+        - rate_limiting_active: true
+        - legitimate_operations_minimally_affected: true
+
+    - name: "Verify governance integrity"
+      duration: "10 min"
+      behavior: "verify.governance_security"
+      assertions:
+        - sybil_detection_effective: ">80%"
+        - spam_filtering_working: true
+        - vote_buying_detected: true
+        - dos_mitigated: true
+        - malicious_proposals_rejected: true
+        - governance_state_consistent: true
+
+  metrics:
+    - total_sybil_wallets: 500
+    - spam_proposals_submitted: "count"
+    - spam_detection_rate: "%"
+    - vote_buying_attempts: "count"
+    - vote_buying_success_rate: "%"
+    - dos_requests: "count"
+    - dos_mitigation_effectiveness: "%"
+    - malicious_proposals_submitted: "count"
+    - malicious_proposals_passed: "count (should be 0)"
+
+  success_criteria:
+    - sybil_attack_attempted: true
+    - sybil_detection_rate: ">80%"
+    - spam_filtered: ">80%"
+    - vote_buying_detected: true
+    - dos_mitigated: true
+    - no_malicious_proposals_passed: true
+    - governance_resilient: true

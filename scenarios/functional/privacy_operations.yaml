@@ -1,0 +1,118 @@
+scenario:
+  metadata:
+    id: "FUNC-005"
+    name: "Privacy Operations Testing"
+    type: functional
+    duration: "45 minutes"
+
+  description: "Shielded transfers, mixing, address recycling - 200 transfers/min"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+
+    bots:
+      - id: "privacy-user-{1-400}"
+        role: "general_user"
+        variant: "power"
+        count: 400
+        wallet_ax: 5000000
+
+  phases:
+    - name: "Basic shielded transfers"
+      duration: "10 min"
+      bots: "privacy-user-{1-200}"
+      behavior: "privacy.shielded_transfer"
+      params:
+        amount: 100000
+        rate_per_bot: 1  # 200 * 1 = 200 transfers/min
+        proof_type: "groth16"
+
+      metrics:
+        - shielded_transfers: "count"
+        - proof_generation_time_p95: "ms"
+        - verification_time_p95: "ms"
+        - proof_success_rate: "%"
+
+      assertions:
+        - all_proofs_valid: true
+        - no_proof_failures: true
+        - verification_rate: "100%"
+
+    - name: "Address recycling operations"
+      duration: "10 min"
+      bots: "privacy-user-{1-100}"
+      behavior: "privacy.address_recycle"
+      params:
+        recycle_interval: "2 min"
+        transfers_per_address: 5
+        amount_per_transfer: 50000
+
+      concurrent:
+        - bots: "privacy-user-{101-200}"
+          behavior: "privacy.shielded_transfer"
+          params:
+            amount: 100000
+            rate_per_bot: 1
+
+      assertions:
+        - addresses_recycled: ">50"
+        - no_address_linkage: true
+        - ownership_proofs_valid: true
+
+    - name: "Mixing operations"
+      duration: "15 min"
+      bots: "privacy-user-{1-300}"
+      behavior: "privacy.mixing"
+      params:
+        mixing_set_size: 10
+        mixing_rounds: 3
+        amount: 100000
+        delay_between_rounds: "1 min"
+
+      metrics:
+        - mixing_operations: "count"
+        - anonymity_set_size: "avg"
+        - mixing_success_rate: "%"
+
+      assertions:
+        - mixing_sets_formed: true
+        - no_timing_correlation: true
+        - funds_conserved: true
+
+    - name: "High-volume shielded operations"
+      duration: "10 min"
+      bots: "privacy-user-*"
+      behavior: "privacy.shielded_transfer"
+      params:
+        amount_range: [10000, 1000000]
+        rate_per_bot: 0.5  # 400 * 0.5 = 200 transfers/min
+        proof_type: "varuna"
+
+      metrics:
+        - varuna_proof_generation_time: "ms"
+        - varuna_vs_groth16_performance: "ratio"
+
+      assertions:
+        - sustained_200_per_min: true
+        - all_varuna_proofs_valid: true
+
+  metrics:
+    - total_shielded_transfers: "count"
+    - total_address_recyclings: "count"
+    - total_mixing_operations: "count"
+    - groth16_proof_time_p95: "ms"
+    - varuna_proof_time_p95: "ms"
+    - verification_time_p95: "ms"
+    - proof_success_rate: "%"
+    - anonymity_set_size_avg: "count"
+    - timing_correlation_detected: "count (should be 0)"
+
+  success_criteria:
+    - sustained_200_transfers_per_min: true
+    - proof_success_rate: ">99%"
+    - p95_proof_generation: "<5 seconds"
+    - p95_verification: "<100ms"
+    - zero_linkage_detected: true
+    - zero_timing_correlation: true
+    - funds_conservation: "100%"
