@@ -30,44 +30,32 @@
 
 ---
 
+### ✅ Production Deployment Setup
+- **Systemd Services**: Coordinator + worker template services created
+- **Configuration**: Example worker configs with resource limits
+- **Installation**: Automated install.sh script
+- **Documentation**: Complete deployment guide (DEPLOYMENT.md)
+
+**Files Created**:
+- `systemd/acdc-botnet-coordinator.service` - Coordinator service (25% CPU, 2GB RAM)
+- `systemd/acdc-botnet-worker@.service` - Worker template service (80% CPU, 16GB RAM)
+- `systemd/worker.conf.example` - Example worker configuration
+- `systemd/install.sh` - Automated installation script
+- `docs/DEPLOYMENT.md` - Comprehensive production deployment guide
+
+---
+
 ## Pending
 
-### 🔧 CI Activation (Manual Step)
+### 🔧 CI Activation (Manual Step - Optional)
 **Action Required**: Enable repository in Woodpecker CI
 
 1. Visit: https://ci.ac-dc.network
 2. Find "acdc-botnet" in repository list (may need to sync)
 3. Enable the repository
-4. Verify pipeline runs for commit `e7547f6`
+4. Verify pipeline runs
 
 **Expected**: All 5 pipeline steps should pass (format, clippy, test, build, doc)
-
-### 🔧 GitHub Setup (Token Required)
-**Action Required**: Run setup script with GitHub token
-
-**Quick Setup**:
-```bash
-# 1. Create token: https://github.com/settings/tokens/new
-#    Scopes: repo, admin:org -> write:org
-
-# 2. Run setup
-export GITHUB_TOKEN='ghp_your_token_here'
-cd /home/devops/working-repos/acdc-botnet
-./setup-github.sh
-```
-
-**Manual Setup** (alternative):
-```bash
-# Create repo via API
-curl -X POST https://api.github.com/orgs/alpha-delta-network/repos \
-  -H "Authorization: token ${GITHUB_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"acdc-botnet","description":"Distributed bot testing infrastructure for Alpha/Delta protocol. 31 scenarios, 99% coverage, formal correctness.","private":false}'
-
-# Push
-git remote add github https://github.com/alpha-delta-network/acdc-botnet.git
-git push github master
-```
 
 ---
 

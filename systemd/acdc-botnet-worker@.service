@@ -1,0 +1,59 @@
+[Unit]
+Description=ACDC Botnet Worker (%i)
+Documentation=https://source.ac-dc.network/alpha-delta-network/acdc-botnet
+After=network-online.target
+Wants=network-online.target
+# Wait for coordinator to be available
+After=acdc-botnet-coordinator.service
+
+[Service]
+Type=simple
+User=devops
+Group=devops
+WorkingDirectory=/opt/acdc-botnet
+
+# Load environment from config file (per-instance configuration)
+EnvironmentFile=-/etc/acdc-botnet/worker-%i.conf
+
+# Binary location
+ExecStart=/usr/local/bin/acdc-botnet worker start \
+  --coordinator ${COORDINATOR_ADDR:-localhost:50051} \
+  --worker-id ${WORKER_ID:-%i} \
+  --max-bots ${MAX_BOTS:-300} \
+  --capabilities ${CAPABILITIES:-trader,user,governor}
+
+# Resource limits for worker (configurable per instance)
+# Default: 80% CPU, 16GB RAM for bot operations
+CPUQuota=${CPU_QUOTA:-80%}
+MemoryMax=${MEMORY_MAX:-16G}
+TasksMax=4096
+
+# Process priority (lower than critical services)
+Nice=10
+IOWeight=100
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/acdc-botnet
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=acdc-botnet-worker-%i
+
+# Restart policy
+Restart=always
+RestartSec=15
+StartLimitInterval=300
+StartLimitBurst=5
+
+# Graceful shutdown (allow bots to finish)
+TimeoutStopSec=60
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

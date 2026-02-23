@@ -1,0 +1,53 @@
+[Unit]
+Description=ACDC Botnet Coordinator
+Documentation=https://source.ac-dc.network/alpha-delta-network/acdc-botnet
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=devops
+Group=devops
+WorkingDirectory=/opt/acdc-botnet
+
+# Binary location
+ExecStart=/usr/local/bin/acdc-botnet coordinator start \
+  --bind 0.0.0.0:50051 \
+  --checkpointing \
+  --checkpoint-interval 30s \
+  --checkpoint-dir /var/lib/acdc-botnet/checkpoints \
+  --metrics-port 9090
+
+# Resource limits for coordinator (light process)
+CPUQuota=25%
+MemoryMax=2G
+TasksMax=1024
+
+# Process priority (higher than workers)
+Nice=-5
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/acdc-botnet
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=acdc-botnet-coordinator
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=300
+StartLimitBurst=5
+
+# Graceful shutdown (allow 30s for checkpoint save)
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

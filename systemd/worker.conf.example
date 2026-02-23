@@ -1,0 +1,27 @@
+# ACDC Botnet Worker Configuration Example
+# Copy to /etc/acdc-botnet/worker-<instance>.conf and customize
+
+# Coordinator address (required)
+COORDINATOR_ADDR=ci.ac-dc.network:50051
+
+# Worker identification (defaults to instance name)
+WORKER_ID=worker-1
+
+# Maximum number of bots this worker can handle
+# Recommendation:
+#   - 8 cores, 16GB RAM: MAX_BOTS=150-200
+#   - 16 cores, 32GB RAM: MAX_BOTS=300-400
+#   - 32 cores, 64GB RAM: MAX_BOTS=600-800
+MAX_BOTS=300
+
+# Bot capabilities this worker can handle (comma-separated)
+# Options: trader, user, governor, prover, validator, liquidity_provider
+# Leave empty for all capabilities
+CAPABILITIES=trader,user,governor
+
+# Resource limits for this worker instance
+# CPU quota (percentage of total CPU, e.g., 80% = 80)
+CPU_QUOTA=80%
+
+# Maximum memory (K, M, G, T suffixes)
+MEMORY_MAX=16G
