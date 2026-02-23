@@ -1,0 +1,68 @@
+scenario:
+  metadata:
+    id: "PT-A-020"
+    name: "Front-Running Detection"
+    type: integration
+    duration_estimate: "1-2 min"
+    priority: P0
+    category: adversarial
+
+  description: "Test MEV front-running detection and mitigation"
+
+  setup:
+    network:
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "victim"
+        role: "trader"
+        variant: "casual"
+        wallet_dx: 100000
+
+      - id: "attacker"
+        role: "trader"
+        variant: "mev_searcher"
+        wallet_dx: 100000
+
+  phases:
+    - name: "Victim submits large swap"
+      bot: "victim"
+      behavior: "dex.market_order"
+      params:
+        pair: "AX/DX"
+        side: "buy"
+        amount: "50000"
+        gas_price: "normal"
+      assertions:
+        - transaction_in_mempool
+      capture:
+        victim_tx: "output.tx_hash"
+
+    - name: "Attacker monitors mempool"
+      bot: "attacker"
+      behavior: "mev.monitor_mempool"
+      assertions:
+        - victim_tx_detected
+
+    - name: "Attacker front-runs"
+      bot: "attacker"
+      behavior: "mev.front_run"
+      params:
+        target_tx: "${victim_tx}"
+        gas_premium: 50  # 50% higher
+      assertions:
+        - front_run_submitted
+
+    - name: "Verify execution order"
+      behavior: "dex.check_execution_order"
+      assertions:
+        - mev_detected
+        - time_priority_enforced  # Not gas priority
+        - victim_not_disadvantaged
+
+  success_criteria:
+    - mev_detected: true
+    - mitigation_applied: true
+    - victim_received_fair_price: true
+
+  expected_result: "Front-running detected, time-priority ordering enforced"

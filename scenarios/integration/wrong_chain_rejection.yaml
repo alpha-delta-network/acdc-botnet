@@ -1,0 +1,61 @@
+scenario:
+  metadata:
+    id: "PT-D-030"
+    name: "Wrong Chain Transaction Rejection"
+    type: integration
+    duration_estimate: "30 sec"
+    priority: P0
+    category: anti_pattern
+
+  description: "Test rejection of transaction submitted to wrong chain"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "confused-user"
+        role: "general_user"
+        variant: "casual"
+        wallet_ax: 10000
+        wallet_dx: 10000
+
+  phases:
+    - name: "Create Alpha transaction"
+      bot: "confused-user"
+      behavior: "transaction.create"
+      params:
+        chain_id: 13  # Alpha testnet
+        transaction_type: "transfer"
+        amount: 1000
+      capture:
+        alpha_tx: "output.transaction"
+
+    - name: "Submit Alpha tx to Delta endpoint (wrong!)"
+      bot: "confused-user"
+      behavior: "transaction.submit_to_delta"
+      params:
+        transaction: "${alpha_tx}"
+      expect_error: true
+      assertions:
+        - error_code: "INVALID_CHAIN_ID"
+        - error_message_contains: "chain_id=13"
+        - error_message_contains: "expected chain_id=8"
+        - transaction_rejected
+
+    - name: "Submit to correct endpoint"
+      bot: "confused-user"
+      behavior: "transaction.submit_to_alpha"
+      params:
+        transaction: "${alpha_tx}"
+      assertions:
+        - transaction_accepted
+        - transaction_confirmed
+
+  success_criteria:
+    - wrong_chain_rejected: true
+    - clear_error_message: true
+    - correct_submission_works: true
+
+  expected_result: "Wrong chain rejected with clear error message"

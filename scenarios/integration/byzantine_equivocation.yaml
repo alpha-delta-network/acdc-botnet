@@ -1,0 +1,67 @@
+scenario:
+  metadata:
+    id: "PT-A-030"
+    name: "Byzantine Equivocation Detection"
+    type: integration
+    duration_estimate: "3-5 min"
+    priority: P0
+    category: adversarial
+
+  description: "Test slashing of validator that double-signs blocks"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+
+    bots:
+      - id: "byzantine-validator"
+        role: "validator"
+        variant: "byzantine"
+        stake: 10000000
+
+      - id: "honest-validators"
+        role: "validator"
+        variant: "honest"
+        count: 5
+        stake: 10000000
+
+  phases:
+    - name: "Byzantine validator proposes conflicting blocks"
+      bot: "byzantine-validator"
+      behavior: "byzantine.equivocation"
+      params:
+        block_height: 1000
+        create_conflict: true
+      assertions:
+        - two_blocks_signed
+        - cryptographic_evidence_generated
+
+    - name: "Honest validators detect equivocation"
+      bots: "honest-validators"
+      behavior: "validator.verify_blocks"
+      assertions:
+        - conflicting_signatures_detected
+        - evidence_broadcast
+
+    - name: "Slashing executed"
+      behavior: "consensus.slash_validator"
+      params:
+        validator: "byzantine-validator"
+        evidence_type: "equivocation"
+      assertions:
+        - validator_slashed
+        - stake_reduced
+        - validator_ejected
+
+    - name: "Verify validator removed"
+      behavior: "query.validator_set"
+      assertions:
+        - byzantine_validator_not_in_set
+        - honest_validators_still_active
+
+  success_criteria:
+    - equivocation_detected: true
+    - slashing_executed: true
+    - network_secure: true
+
+  expected_result: "Equivocation detected, validator slashed and ejected"

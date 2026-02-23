@@ -1,0 +1,73 @@
+scenario:
+  metadata:
+    id: "PT-D-010"
+    name: "Insufficient Balance Error Handling"
+    type: integration
+    duration_estimate: "30 sec"
+    priority: P0
+    category: anti_pattern
+
+  description: "Test proper error handling for insufficient balance"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+
+    bots:
+      - id: "user-1"
+        role: "general_user"
+        variant: "casual"
+        wallet_ax: 1000
+
+  phases:
+    - name: "Query initial balance"
+      bot: "user-1"
+      behavior: "query.balance_alpha"
+      params:
+        token: "AX"
+      assertions:
+        - balance_equals: 1000
+
+    - name: "Attempt oversized transfer"
+      bot: "user-1"
+      behavior: "transfer.attempt"
+      params:
+        to: "ax1recipient"
+        amount: 5000  # More than available
+      expect_error: true
+      assertions:
+        - error_code: "INSUFFICIENT_BALANCE"
+        - error_message_contains: "available 1000 AX, required 5000 AX"
+        - transaction_not_submitted
+
+    - name: "Verify balance unchanged"
+      bot: "user-1"
+      behavior: "query.balance_alpha"
+      params:
+        token: "AX"
+      assertions:
+        - balance_equals: 1000  # Unchanged
+
+    - name: "Successful transfer (within balance)"
+      bot: "user-1"
+      behavior: "transfer.execute"
+      params:
+        to: "ax1recipient"
+        amount: 500
+      assertions:
+        - transaction_confirmed
+
+    - name: "Verify balance reduced correctly"
+      bot: "user-1"
+      behavior: "query.balance_alpha"
+      params:
+        token: "AX"
+      assertions:
+        - balance_equals: 500
+
+  success_criteria:
+    - error_handling_correct: true
+    - error_message_clear: true
+    - state_consistent: true
+
+  expected_result: "Clear error message, state unchanged after error"

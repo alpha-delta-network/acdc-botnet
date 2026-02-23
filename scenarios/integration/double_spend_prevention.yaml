@@ -1,0 +1,62 @@
+scenario:
+  metadata:
+    id: "PT-A-010"
+    name: "Cross-Chain Double-Spend Prevention"
+    type: integration
+    duration_estimate: "2-3 min"
+    priority: P0
+    category: adversarial
+
+  description: "Attempt double-spend via concurrent mints, verify prevention"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "attacker-1"
+        role: "general_user"
+        variant: "malicious"
+        wallet_ax: 1000000
+
+  phases:
+    - name: "Lock AX on Alpha"
+      bot: "attacker-1"
+      behavior: "cross_chain.lock"
+      params:
+        amount: 500000
+      assertions:
+        - lock_confirmed
+        - unlock_id_generated
+      capture:
+        unlock_id: "output.unlock_id"
+
+    - name: "Wait for Alpha finality"
+      delay: 30s
+
+    - name: "Attempt double mint (concurrent)"
+      bot: "attacker-1"
+      behavior: "cross_chain.double_mint_attack"
+      params:
+        unlock_id: "${unlock_id}"
+        concurrent_requests: 2
+      assertions:
+        - first_mint_accepted
+        - second_mint_rejected
+
+    - name: "Verify balance"
+      bot: "attacker-1"
+      behavior: "query.balance_delta"
+      params:
+        token: "sAX"
+      assertions:
+        - balance_equals: 500000  # Not 1000000!
+        - double_spend_prevented
+
+  success_criteria:
+    - second_mint_rejected: true
+    - unlock_id_marked_used: true
+    - no_double_spend: true
+
+  expected_result: "Double-spend prevented by replay protection"

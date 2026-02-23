@@ -1,0 +1,69 @@
+scenario:
+  metadata:
+    id: "PT-A-001"
+    name: "Sybil Attack Detection"
+    type: integration
+    duration_estimate: "5-10 min"
+    priority: P0
+    category: adversarial
+
+  description: "Test detection of coordinated Sybil attack on governance"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+
+    bots:
+      # 100 Sybil bots with minimal stake
+      - id: "sybil-{1-100}"
+        role: "governor"
+        variant: "malicious"
+        count: 100
+        stake_per_bot: 1000  # Minimal stake
+
+      # Legitimate governors
+      - id: "honest-{1-10}"
+        role: "governor"
+        variant: "honest"
+        count: 10
+        stake_per_bot: 100000  # Proper stake
+
+  phases:
+    - name: "Create target proposal"
+      bot: "honest-1"
+      behavior: "governance.create_proposal"
+      params:
+        type: "parameter_update"
+      assertions:
+        - proposal_created
+
+    - name: "Coordinated Sybil voting"
+      bots: "sybil-*"
+      behavior: "governance.sybil_vote"
+      params:
+        vote: "yes"
+        coordination: true
+      assertions:
+        - votes_submitted
+
+    - name: "Honest voting"
+      bots: "honest-*"
+      behavior: "governance.vote"
+      params:
+        vote: "no"
+      assertions:
+        - votes_submitted
+
+    - name: "Analyze vote distribution"
+      behavior: "governance.analyze_votes"
+      assertions:
+        - sybil_pattern_detected
+        - vote_concentration_flagged
+        - attack_mitigated
+
+  success_criteria:
+    - sybil_attack_detected: true
+    - proposal_outcome: "rejected_due_to_manipulation"
+    - all_sybil_bots_flagged: true
+
+  expected_result: "Attack detected and prevented"
