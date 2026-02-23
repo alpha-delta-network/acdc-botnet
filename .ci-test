@@ -1,0 +1,3 @@
+# CI Test File
+This file triggers the Woodpecker CI pipeline to verify the configuration.
+Build timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
