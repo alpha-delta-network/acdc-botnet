@@ -1,0 +1,62 @@
+scenario:
+  metadata:
+    id: "PT-L-021"
+    name: "Limit Order Lifecycle"
+    type: unit
+    duration_estimate: "30-60 sec"
+    priority: P0
+
+  description: "Place limit order, partial fill, cancel"
+
+  setup:
+    network:
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "trader-1"
+        role: "trader"
+        variant: "spot"
+        wallet_dx: 100000
+
+  phases:
+    - name: "Place limit buy order"
+      bot: "trader-1"
+      behavior: "dex.limit_order"
+      params:
+        pair: "AX/DX"
+        side: "buy"
+        amount: "2000"
+        price: "0.95"  # Below market
+      assertions:
+        - order_id_generated
+        - order_in_orderbook
+
+    - name: "Wait for partial fill"
+      delay: 15s
+      description: "Wait for some market activity"
+
+    - name: "Check fill status"
+      bot: "trader-1"
+      behavior: "dex.query_order"
+      assertions:
+        - order_partially_filled
+        - filled_amount_positive
+
+    - name: "Cancel remaining order"
+      bot: "trader-1"
+      behavior: "dex.cancel_order"
+      assertions:
+        - cancel_confirmed
+
+    - name: "Verify order removed"
+      bot: "trader-1"
+      behavior: "dex.query_orderbook"
+      params:
+        pair: "AX/DX"
+      assertions:
+        - order_not_in_orderbook
+
+  success_criteria:
+    - all_phases_passed
+    - partial_fill_successful
+    - cancel_successful

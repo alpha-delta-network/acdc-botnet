@@ -1,0 +1,60 @@
+scenario:
+  metadata:
+    id: "PT-L-020"
+    name: "Spot Market Order"
+    type: unit
+    duration_estimate: "10-30 sec"
+    priority: P0
+
+  description: "Place and execute market order on DEX"
+
+  setup:
+    network:
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "trader-1"
+        role: "trader"
+        variant: "spot"
+        wallet_ax: 100000
+        wallet_dx: 100000
+
+  phases:
+    - name: "Query orderbook"
+      bot: "trader-1"
+      behavior: "dex.query_orderbook"
+      params:
+        pair: "AX/DX"
+      assertions:
+        - orderbook_not_empty
+        - spread_reasonable
+
+    - name: "Place market buy order"
+      bot: "trader-1"
+      behavior: "dex.market_order"
+      params:
+        pair: "AX/DX"
+        side: "buy"
+        amount: "1000"
+      assertions:
+        - order_id_generated
+        - order_immediately_filled
+
+    - name: "Verify balance updated"
+      bot: "trader-1"
+      behavior: "query.balance_delta"
+      params:
+        token: "AX"
+      assertions:
+        - balance_increased_by: 1000
+
+    - name: "Verify trade in history"
+      bot: "trader-1"
+      behavior: "dex.query_trades"
+      assertions:
+        - trade_appears_in_history
+        - trade_details_correct
+
+  success_criteria:
+    - all_phases_passed
+    - execution_under: 30s

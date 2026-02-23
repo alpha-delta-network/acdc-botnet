@@ -1,0 +1,60 @@
+scenario:
+  metadata:
+    id: "PT-L-010"
+    name: "Cross-Chain Lock/Mint Flow"
+    type: unit
+    duration_estimate: "60-90 sec"
+    priority: P0
+
+  description: "Lock AX on Alpha → IPC → Mint sAX on Delta"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "user-1"
+        role: "general_user"
+        variant: "power"
+        wallet_ax: 1000000
+        wallet_sax: 0
+
+  phases:
+    - name: "Lock AX on Alpha"
+      bot: "user-1"
+      behavior: "cross_chain.lock"
+      params:
+        amount: 500000
+        recipient: "dx1recipient_address"
+      assertions:
+        - lock_transaction_confirmed
+        - unlock_id_generated
+        - ipc_message_sent
+
+    - name: "Wait for Alpha finality"
+      delay: 30s
+      description: "3 blocks at ~10s per block"
+
+    - name: "Verify IPC message"
+      bot: "user-1"
+      behavior: "cross_chain.check_ipc"
+      assertions:
+        - ipc_message_received_on_delta
+
+    - name: "Wait for sAX mint on Delta"
+      delay: 10s
+
+    - name: "Verify sAX balance"
+      bot: "user-1"
+      behavior: "query.balance_delta"
+      params:
+        token: "sAX"
+      assertions:
+        - balance_equals: 500000
+        - total_supply_conserved
+
+  success_criteria:
+    - all_phases_passed
+    - atomicity_guaranteed
+    - no_double_spend

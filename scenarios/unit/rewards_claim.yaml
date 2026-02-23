@@ -1,0 +1,50 @@
+scenario:
+  metadata:
+    id: "PT-L-042"
+    name: "Validator Rewards Claim"
+    type: unit
+    duration_estimate: "30-60 sec"
+    priority: P1
+
+  description: "Claim accumulated validator rewards"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+
+    bots:
+      - id: "validator-1"
+        role: "validator"
+        variant: "honest"
+        stake: 10000000
+
+  phases:
+    - name: "Query pending rewards"
+      bot: "validator-1"
+      behavior: "rewards.query"
+      assertions:
+        - rewards_available
+        - rewards_amount_positive
+
+    - name: "Submit claim transaction"
+      bot: "validator-1"
+      behavior: "rewards.claim"
+      assertions:
+        - transaction_id_generated
+        - claim_submitted
+
+    - name: "Wait for transaction confirmation"
+      delay: 15s
+
+    - name: "Verify rewards credited"
+      bot: "validator-1"
+      behavior: "query.balance_alpha"
+      params:
+        token: "AX"
+      assertions:
+        - balance_increased
+        - rewards_cleared
+
+  success_criteria:
+    - all_phases_passed
+    - rewards_claimed_successfully

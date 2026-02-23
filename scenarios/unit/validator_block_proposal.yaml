@@ -1,0 +1,69 @@
+scenario:
+  metadata:
+    id: "PT-L-040"
+    name: "Validator Block Proposal"
+    type: unit
+    duration_estimate: "1-2 min"
+    priority: P0
+
+  description: "Validator proposes a block and collects attestations"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+
+    bots:
+      - id: "validator-1"
+        role: "validator"
+        variant: "honest"
+        stake: 10000000
+
+  phases:
+    - name: "Verify validator status"
+      bot: "validator-1"
+      behavior: "validator.check_status"
+      assertions:
+        - is_in_active_set
+        - stake_sufficient
+
+    - name: "Wait for turn"
+      delay: 5s
+      description: "Wait for round-robin turn"
+
+    - name: "Collect transactions"
+      bot: "validator-1"
+      behavior: "validator.collect_mempool"
+      assertions:
+        - transactions_collected
+        - mempool_not_empty
+
+    - name: "Build block"
+      bot: "validator-1"
+      behavior: "validator.build_block"
+      assertions:
+        - block_header_valid
+        - merkle_root_computed
+
+    - name: "Propose block"
+      bot: "validator-1"
+      behavior: "validator.propose_block"
+      assertions:
+        - block_broadcast
+        - proposal_acknowledged
+
+    - name: "Wait for attestations"
+      delay: 10s
+      description: "Wait for >2/3 stake to attest"
+
+    - name: "Finalize block"
+      bot: "validator-1"
+      behavior: "validator.finalize_block"
+      assertions:
+        - quorum_reached
+        - block_finalized
+        - block_in_canonical_chain
+
+  success_criteria:
+    - all_phases_passed
+    - block_finalized
+    - no_equivocation

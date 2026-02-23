@@ -1,0 +1,65 @@
+scenario:
+  metadata:
+    id: "PT-L-001"
+    name: "Basic Governance Vote"
+    type: unit
+    duration_estimate: "2-3 min"
+    priority: P0
+
+  description: "Complete governance proposal flow: create → vote → timelock → execute"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+      adnet_unified: "http://localhost:3000"
+
+    bots:
+      - id: "governor-1"
+        role: "governor"
+        variant: "active"
+        wallet_ax: 1000000
+        wallet_dx: 1000000
+
+  phases:
+    - name: "Create proposal"
+      bot: "governor-1"
+      behavior: "governance.create_proposal"
+      params:
+        proposal_type: "parameter_update"
+        description: "Test proposal for governance testing"
+        voting_period_blocks: 100
+        timelock_blocks: 50
+      assertions:
+        - proposal_id_generated
+        - proposal_stored_on_chain
+
+    - name: "Wait for voting period start"
+      delay: 10s
+
+    - name: "Cast vote"
+      bot: "governor-1"
+      behavior: "governance.vote"
+      params:
+        vote: "yes"
+      assertions:
+        - vote_recorded
+        - vote_weight_correct
+
+    - name: "Wait for voting period end"
+      delay: 30s
+
+    - name: "Wait for timelock"
+      delay: 30s
+
+    - name: "Execute proposal"
+      bot: "governor-1"
+      behavior: "governance.execute"
+      assertions:
+        - proposal_executed
+        - state_changed
+
+  success_criteria:
+    - all_phases_passed
+    - no_errors
+    - total_duration_under: 180s

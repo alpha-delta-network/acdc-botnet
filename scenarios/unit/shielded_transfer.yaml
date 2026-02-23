@@ -1,0 +1,52 @@
+scenario:
+  metadata:
+    id: "PT-L-030"
+    name: "Shielded Transfer"
+    type: unit
+    duration_estimate: "10-15 sec"
+    priority: P1
+
+  description: "Generate ZK proof and submit shielded transaction"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+
+    bots:
+      - id: "private-user-1"
+        role: "general_user"
+        variant: "privacy_focused"
+        wallet_ax: 50000
+
+  phases:
+    - name: "Generate ZK proof"
+      bot: "private-user-1"
+      behavior: "privacy.generate_proof"
+      params:
+        amount: 10000
+        recipient: "ax1shielded_recipient"
+      assertions:
+        - proof_generated
+        - proof_valid
+      timeout: 15s
+
+    - name: "Submit shielded transaction"
+      bot: "private-user-1"
+      behavior: "privacy.shielded_transfer"
+      assertions:
+        - transaction_id_generated
+
+    - name: "Wait for proof verification"
+      delay: 3s
+
+    - name: "Verify transaction confirmed"
+      bot: "private-user-1"
+      behavior: "query.transaction_status"
+      assertions:
+        - transaction_confirmed
+        - no_amount_leaked
+
+  success_criteria:
+    - all_phases_passed
+    - proof_generation_under: 10s
+    - privacy_preserved
