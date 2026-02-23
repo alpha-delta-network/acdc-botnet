@@ -1,0 +1,42 @@
+[package]
+name = "adnet-testbots"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "adnet-testbots"
+path = "src/main.rs"
+
+[dependencies]
+# Internal dependencies
+adnet-testbot = { path = "../bot" }
+adnet-testbot-roles = { path = "../roles" }
+adnet-testbot-behaviors = { path = "../behaviors" }
+adnet-testbot-integration = { path = "../integration" }
+adnet-testbot-metrics = { path = "../metrics" }
+adnet-testbot-scenarios = { path = "../scenarios" }
+adnet-testbot-distributed = { path = "../distributed" }
+
+# CLI
+clap = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Tracing
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

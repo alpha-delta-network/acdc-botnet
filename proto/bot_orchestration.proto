@@ -1,0 +1,136 @@
+syntax = "proto3";
+
+package adnet.testbots;
+
+// Bot Orchestration Service
+service BotOrchestration {
+    // Worker registration
+    rpc RegisterWorker(WorkerInfo) returns (WorkerAck);
+
+    // Bot lifecycle management
+    rpc SpawnBot(BotSpec) returns (BotHandle);
+    rpc StopBot(BotId) returns (StopAck);
+    rpc GetBotStatus(BotId) returns (BotStatus);
+
+    // Metrics streaming
+    rpc StreamMetrics(stream WorkerMetrics) returns (Empty);
+
+    // Health monitoring
+    rpc Heartbeat(WorkerHealth) returns (CoordinatorDirective);
+
+    // Scenario distribution
+    rpc DistributeScenario(ScenarioSpec) returns (DistributionPlan);
+}
+
+// Worker registration information
+message WorkerInfo {
+    string worker_id = 1;
+    uint32 cpu_cores = 2;
+    uint64 memory_bytes = 3;
+    uint32 max_bots = 4;
+    repeated string capabilities = 5;  // ["trader", "validator", "prover"]
+    string address = 6;                // Worker's network address
+}
+
+message WorkerAck {
+    bool success = 1;
+    string message = 2;
+    string coordinator_id = 3;
+}
+
+// Bot specification for spawning
+message BotSpec {
+    string bot_id = 1;
+    string role = 2;                   // "general_user", "trader", etc.
+    string role_variant = 3;           // "casual", "power", "whale"
+    string behavior = 4;               // Behavior pattern to execute
+    bytes config = 5;                  // Serialized BotConfig
+    string target_network = 6;         // Network endpoint
+    repeated string tags = 7;          // Metadata tags
+}
+
+message BotHandle {
+    string bot_id = 1;
+    string worker_id = 2;
+    bool success = 3;
+    string message = 4;
+}
+
+message BotId {
+    string bot_id = 1;
+}
+
+message StopAck {
+    bool success = 1;
+    string message = 2;
+}
+
+message BotStatus {
+    string bot_id = 1;
+    string status = 2;  // "running", "stopped", "error"
+    string message = 3;
+    int64 uptime_ms = 4;
+    uint64 operations_count = 5;
+}
+
+// Worker metrics for aggregation
+message WorkerMetrics {
+    string worker_id = 1;
+    uint32 active_bots = 2;
+    repeated BotMetric bot_metrics = 3;
+    uint64 cpu_usage_percent = 4;
+    uint64 memory_usage_bytes = 5;
+    int64 timestamp_ms = 6;
+}
+
+message BotMetric {
+    string bot_id = 1;
+    uint64 operations_total = 2;
+    uint64 errors_total = 3;
+    double latency_p50_ms = 4;
+    double latency_p95_ms = 5;
+    double latency_p99_ms = 6;
+}
+
+// Worker health status
+message WorkerHealth {
+    string worker_id = 1;
+    bool healthy = 2;
+    uint32 active_bots = 3;
+    int64 timestamp_ms = 4;
+}
+
+message CoordinatorDirective {
+    enum Action {
+        CONTINUE = 0;
+        SHUTDOWN = 1;
+        SPAWN_BOTS = 2;
+        STOP_BOTS = 3;
+    }
+    Action action = 1;
+    repeated BotSpec spawn_specs = 2;
+    repeated string stop_bot_ids = 3;
+}
+
+// Scenario distribution
+message ScenarioSpec {
+    string scenario_id = 1;
+    string name = 2;
+    uint32 total_bots = 3;
+    repeated BotSpec bot_specs = 4;
+    bytes config = 5;  // Serialized scenario configuration
+}
+
+message DistributionPlan {
+    string scenario_id = 1;
+    repeated WorkerAssignment assignments = 2;
+    bool success = 3;
+    string message = 4;
+}
+
+message WorkerAssignment {
+    string worker_id = 1;
+    repeated BotSpec bot_specs = 2;
+}
+
+message Empty {}
