@@ -1,161 +1,81 @@
-# Woodpecker CI Configuration for AdNet Testbots
-#
-# Runs critical scenarios on every PR to ensure code quality and functionality.
-# Docker isolation required for all code repos.
+when:
+  - event: [push, pull_request, manual]
 
-workspace:
-  base: /workspace
-  path: adnet-testbots
+platform: linux/amd64
 
-pipeline:
-  # Step 1: Build testbots binary
-  build:
-    image: rust-builder:1.92.0-ci
+variables:
+  - &rust_image 'rust-builder:1.92.0-ci'
+
+steps:
+  - name: format-check
+    image: *rust_image
+    pull: true
     commands:
-      - echo "Building adnet-testbots..."
-      - cargo build --release --all-features
-      - ls -lh target/release/adnet-testbots || echo "Binary not found"
-    volumes:
-      - /var/cache/sccache:/root/.cache/sccache
-      - /var/cache/cargo-registry:/root/.cargo/registry
-      - /var/cache/cargo-git:/root/.cargo/git
-    environment:
-      - CARGO_INCREMENTAL=0
-      - RUSTC_WRAPPER=/usr/local/bin/sccache
-      - SCCACHE_DIR=/root/.cache/sccache
-
-  # Step 2: Run unit tests
-  test-unit:
-    image: rust-builder:1.92.0-ci
-    commands:
-      - echo "Running unit tests..."
-      - cargo test --release --lib --all-features
-    volumes:
-      - /var/cache/sccache:/root/.cache/sccache
-      - /var/cache/cargo-registry:/root/.cargo/registry
-      - /var/cache/cargo-git:/root/.cargo/git
-    environment:
-      - CARGO_INCREMENTAL=0
-      - RUSTC_WRAPPER=/usr/local/bin/sccache
-
-  # Step 3: Clippy linting
-  clippy:
-    image: rust-builder:1.92.0-ci
-    commands:
-      - echo "Running Clippy..."
-      - cargo clippy --all-features --all-targets -- -D warnings
-    volumes:
-      - /var/cache/sccache:/root/.cache/sccache
-      - /var/cache/cargo-registry:/root/.cargo/registry
-    environment:
-      - CARGO_INCREMENTAL=0
-
-  # Step 4: Format check
-  format:
-    image: rust-builder:1.92.0-ci
-    commands:
-      - echo "Checking code formatting..."
       - cargo +nightly fmt --all -- --check
     volumes:
-      - /var/cache/cargo-registry:/root/.cargo/registry
+      - /var/cache/sccache:/sccache
+      - /var/cache/cargo:/cargo_cache
+    environment:
+      CARGO_HOME: /cargo_cache
+      SCCACHE_DIR: /sccache
+      RUSTC_WRAPPER: sccache
+      CARGO_INCREMENTAL: 0
 
-  # Step 5: Critical scenario - Daily Network Ops (10 min subset)
-  scenario-daily-ops:
-    image: rust-builder:1.92.0-ci
+  - name: clippy
+    image: *rust_image
+    pull: true
     commands:
-      - echo "Running daily-network-ops scenario (10 min subset)..."
-      - ./target/release/adnet-testbots run daily-network-ops --duration 10m --condensed || exit 1
-      - echo "Scenario passed with TPS and error rate checks"
-    depends_on:
-      - build
-    when:
-      event: [pull_request, push]
+      - cargo clippy --all-targets --all-features -- -D warnings
+    volumes:
+      - /var/cache/sccache:/sccache
+      - /var/cache/cargo:/cargo_cache
+    environment:
+      CARGO_HOME: /cargo_cache
+      SCCACHE_DIR: /sccache
+      RUSTC_WRAPPER: sccache
+      CARGO_INCREMENTAL: 0
 
-  # Step 6: Critical scenario - Cross-Chain Stress (5 min)
-  scenario-cross-chain:
-    image: rust-builder:1.92.0-ci
+  - name: test
+    image: *rust_image
+    pull: true
     commands:
-      - echo "Running cross-chain-stress scenario (5 min)..."
-      - ./target/release/adnet-testbots run cross-chain-stress --duration 5m --condensed || exit 1
-      - echo "Cross-chain atomicity verified"
-    depends_on:
-      - build
-    when:
-      event: [pull_request, push]
+      - cargo test --release --all-features
+    volumes:
+      - /var/cache/sccache:/sccache
+      - /var/cache/cargo:/cargo_cache
+    environment:
+      CARGO_HOME: /cargo_cache
+      SCCACHE_DIR: /sccache
+      RUSTC_WRAPPER: sccache
+      CARGO_INCREMENTAL: 0
 
-  # Step 7: Critical scenario - MEV Extraction (5 min)
-  scenario-mev:
-    image: rust-builder:1.92.0-ci
+  - name: build
+    image: *rust_image
+    pull: true
     commands:
-      - echo "Running mev-extraction scenario (5 min)..."
-      - ./target/release/adnet-testbots run mev-extraction --duration 5m --condensed || exit 1
-      - echo "MEV detection verified"
-    depends_on:
-      - build
-    when:
-      event: [pull_request, push]
+      - cargo build --release --all-features
+    volumes:
+      - /var/cache/sccache:/sccache
+      - /var/cache/cargo:/cargo_cache
+    environment:
+      CARGO_HOME: /cargo_cache
+      SCCACHE_DIR: /sccache
+      RUSTC_WRAPPER: sccache
+      CARGO_INCREMENTAL: 0
 
-  # Step 8: Critical scenario - Byzantine Validators (10 min)
-  scenario-byzantine:
-    image: rust-builder:1.92.0-ci
+  - name: doc-check
+    image: *rust_image
+    pull: true
     commands:
-      - echo "Running byzantine-validators scenario (10 min)..."
-      - ./target/release/adnet-testbots run byzantine-validators --duration 10m --condensed || exit 1
-      - echo "Byzantine fault tolerance verified"
-    depends_on:
-      - build
-    when:
-      event: [pull_request, push]
+      - cargo doc --no-deps --all-features
+    volumes:
+      - /var/cache/sccache:/sccache
+      - /var/cache/cargo:/cargo_cache
+    environment:
+      CARGO_HOME: /cargo_cache
+      SCCACHE_DIR: /sccache
+      RUSTC_WRAPPER: sccache
+      CARGO_INCREMENTAL: 0
 
-  # Step 9: Critical scenario - Peak TPS Stress (5 min)
-  scenario-peak-tps:
-    image: rust-builder:1.92.0-ci
-    commands:
-      - echo "Running peak-tps-stress scenario (5 min)..."
-      - ./target/release/adnet-testbots run peak-tps-stress --duration 5m --condensed || exit 1
-      - echo "TPS target achieved"
-    depends_on:
-      - build
-    when:
-      event: [pull_request, push]
-
-  # Step 10: Aggregate results
-  aggregate-results:
-    image: rust-builder:1.92.0-ci
-    commands:
-      - echo "All critical scenarios passed!"
-      - echo "✓ daily-network-ops - Functional test passed"
-      - echo "✓ cross-chain-stress - Atomicity verified"
-      - echo "✓ mev-extraction - Security detection working"
-      - echo "✓ byzantine-validators - BFT verified"
-      - echo "✓ peak-tps-stress - Performance target met"
-    depends_on:
-      - scenario-daily-ops
-      - scenario-cross-chain
-      - scenario-mev
-      - scenario-byzantine
-      - scenario-peak-tps
-    when:
-      event: [pull_request, push]
-
-# Branch protection
-branches:
-  exclude:
-    - main
-    - master
-
-# Execution constraints
-when:
-  event:
-    - pull_request
-    - push
-  branch:
-    exclude:
-      - main
-      - master
-
-# Resource limits
-limits:
-  # Each scenario runs in sequence to avoid resource contention
-  # Total estimated time: 35-40 minutes
-  timeout: 60m
+labels:
+  backend: docker

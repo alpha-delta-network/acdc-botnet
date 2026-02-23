@@ -1,8 +1,16 @@
 # Rust
-target/
+/target/
 Cargo.lock
 **/*.rs.bk
 *.pdb
+
+# Checkpoints
+/checkpoints/
+*.checkpoint
+
+# Logs
+*.log
+/logs/
 
 # IDE
 .vscode/
@@ -15,9 +23,6 @@ Cargo.lock
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
-
-# Test artifacts
-test-output/
-*.profraw
+# Test outputs
+/test-results/
+/metrics-output/
