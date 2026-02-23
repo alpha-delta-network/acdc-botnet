@@ -1,22 +1,27 @@
-# AdNet Testbots
+# ACDC Botnet
 
 Production-grade bot testing infrastructure for the Alpha/Delta dual-chain protocol.
 
 [![CI Status](https://ci.ac-dc.network/api/badges/alpha-delta-network/acdc-botnet/status.svg)](https://ci.ac-dc.network/alpha-delta-network/acdc-botnet)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
+**Repositories:**
+- 🦊 **Forgejo**: https://source.ac-dc.network/alpha-delta-network/acdc-botnet
+- 🌐 **Radicle**: `rad:z2WYmpZk4rXZ3K3ToSF6ndfuRNNGa`
+- 🐙 **GitHub**: https://github.com/alpha-delta-network/acdc-botnet (setup: `./setup-github.sh`)
+
 ## Overview
 
-AdNet Testbots provides comprehensive functional, security, and chaos testing through autonomous bot orchestration. It covers 90+ REST endpoints, supports distributed execution across 10+ worker nodes, and includes 24 pre-built scenarios for rigorous protocol testing.
+ACDC Botnet provides comprehensive functional, security, and chaos testing through autonomous bot orchestration. It covers 90+ REST endpoints, supports distributed execution across 10+ worker nodes, and includes **31 pre-built scenarios** with **99% coverage** for rigorous protocol testing.
 
 **Key Features:**
 
 - 🤖 **Autonomous Bot Orchestration** - 70+ behavior patterns (legitimate, adversarial, anti-patterns)
 - 📊 **Real-Time Metrics** - HDR histogram for accurate latency measurements, Prometheus export
 - 🌐 **Distributed Architecture** - Scale across 10+ worker nodes with automatic failover
-- 🔒 **Security-First** - Byzantine fault tolerance, attack detection, formal threat models
+- 🔒 **Security-First** - 100% attack vector coverage, Byzantine fault tolerance, formal threat models
 - 🎯 **Type-Safe** - Phantom types for compile-time state validation
-- 📈 **24 Pre-Built Scenarios** - Functional, security, load, and chaos testing
+- 📈 **31 Pre-Built Scenarios** - Functional (9), Security (11), Load (4), Chaos (7)
 
 ## Quick Start
 
