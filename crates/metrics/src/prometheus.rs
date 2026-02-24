@@ -159,7 +159,7 @@ impl PrometheusExporter {
         if !snapshot.behavior_success_rates.is_empty() {
             output.push_str(
                 "# HELP testbots_behavior_success_rate Success rate by behavior type\n\
-                 # TYPE testbots_behavior_success_rate gauge\n"
+                 # TYPE testbots_behavior_success_rate gauge\n",
             );
             for (behavior, rate) in &snapshot.behavior_success_rates {
                 output.push_str(&format!(
@@ -174,7 +174,7 @@ impl PrometheusExporter {
         if !snapshot.bots_by_role.is_empty() {
             output.push_str(
                 "# HELP testbots_bots_by_role Number of bots by role\n\
-                 # TYPE testbots_bots_by_role gauge\n"
+                 # TYPE testbots_bots_by_role gauge\n",
             );
             for (role, count) in &snapshot.bots_by_role {
                 output.push_str(&format!(
@@ -216,7 +216,7 @@ impl PrometheusExporter {
 
             output.push_str(
                 "# HELP testbots_worker_bots Number of bots per worker\n\
-                 # TYPE testbots_worker_bots gauge\n"
+                 # TYPE testbots_worker_bots gauge\n",
             );
             for (worker_id, bot_count) in &snapshot.workers {
                 output.push_str(&format!(
