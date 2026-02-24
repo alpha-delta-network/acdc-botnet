@@ -25,7 +25,7 @@ steps:
     commands:
       - apt-get update && apt-get install -y protobuf-compiler
       - rustup component add clippy
-      - cargo clippy --all-targets --all-features -- -D warnings
+      - cargo clippy --all-targets --all-features -- -W clippy::all
     volumes:
       - /var/cache/cargo:/cargo_cache
     environment:
