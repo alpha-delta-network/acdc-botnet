@@ -23,6 +23,7 @@ steps:
     image: *rust_image
     pull: true
     commands:
+      - apt-get update && apt-get install -y protobuf-compiler
       - rustup component add clippy
       - cargo clippy --all-targets --all-features -- -D warnings
     volumes:
@@ -35,6 +36,7 @@ steps:
     image: *rust_image
     pull: true
     commands:
+      - apt-get update && apt-get install -y protobuf-compiler
       - cargo test --release --all-features
     volumes:
       - /var/cache/cargo:/cargo_cache
@@ -46,6 +48,7 @@ steps:
     image: *rust_image
     pull: true
     commands:
+      - apt-get update && apt-get install -y protobuf-compiler
       - cargo build --release --all-features
     volumes:
       - /var/cache/cargo:/cargo_cache
@@ -57,6 +60,7 @@ steps:
     image: *rust_image
     pull: true
     commands:
+      - apt-get update && apt-get install -y protobuf-compiler
       - cargo doc --no-deps --all-features
     volumes:
       - /var/cache/cargo:/cargo_cache
