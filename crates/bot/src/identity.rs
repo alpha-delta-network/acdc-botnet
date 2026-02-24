@@ -119,7 +119,9 @@ impl IdentityGenerator {
     pub fn generate(&self, bot_id: String) -> Result<Identity> {
         // For now, use OS random source
         // TODO: Add deterministic generation from seed for reproducibility
-        let signing_key = SigningKey::from(OsRng);
+        let mut rng = OsRng;
+        let secret_bytes: [u8; 32] = rand::Rng::gen(&mut rng);
+        let signing_key = SigningKey::from_bytes(&secret_bytes);
 
         Identity::from_signing_key(bot_id, signing_key)
     }

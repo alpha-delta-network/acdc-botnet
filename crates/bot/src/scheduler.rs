@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tokio::time::{interval_at, sleep, Duration, Instant};
 
 /// A scheduled task
+#[derive(Clone)]
 pub struct Task {
     /// Task identifier
     pub id: String,
