@@ -11,6 +11,7 @@ steps:
     image: *rust_image
     pull: true
     commands:
+      - rustup component add --toolchain nightly rustfmt
       - cargo +nightly fmt --all -- --check
     volumes:
       - /var/cache/sccache:/sccache
