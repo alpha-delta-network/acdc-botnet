@@ -26,6 +26,7 @@ steps:
     image: *rust_image
     pull: true
     commands:
+      - rustup component add clippy
       - cargo clippy --all-targets --all-features -- -D warnings
     volumes:
       - /var/cache/sccache:/sccache
