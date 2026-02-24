@@ -106,7 +106,7 @@ impl Scheduler {
 
     /// Run all scheduled tasks
     pub async fn run(&self) -> Result<()> {
-        let tasks = self.tasks.lock().clone();
+        let tasks = (*self.tasks.lock()).clone();
 
         for task in tasks {
             if *self.shutdown.lock() {

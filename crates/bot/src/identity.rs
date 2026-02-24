@@ -3,8 +3,9 @@
 /// Generates cryptographic identities (keypairs and addresses) for both
 /// Alpha (ax1 bech32 addresses) and Delta (dx1 bech32 addresses) chains.
 use crate::{BotError, Result};
+use bech32::ToBase32;
 use blake2::{Blake2s256, Digest};
-use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 
@@ -55,7 +56,7 @@ impl Identity {
         // Convert to bech32
         // Note: For production, use proper bech32 encoding
         // This is a simplified version for the testbot framework
-        let encoded = bech32::encode(prefix, address_bytes.to_vec(), bech32::Variant::Bech32)
+        let encoded = bech32::encode(prefix, address_bytes.to_base32(), bech32::Variant::Bech32)
             .map_err(|e| BotError::IdentityError(format!("Bech32 encoding failed: {}", e)))?;
 
         Ok(encoded)
@@ -118,7 +119,7 @@ impl IdentityGenerator {
     pub fn generate(&self, bot_id: String) -> Result<Identity> {
         // For now, use OS random source
         // TODO: Add deterministic generation from seed for reproducibility
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let signing_key = SigningKey::from(OsRng);
 
         Identity::from_signing_key(bot_id, signing_key)
     }
