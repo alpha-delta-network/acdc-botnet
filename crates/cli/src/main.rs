@@ -215,6 +215,7 @@ async fn run_local_scenario(scenario: &str, bot_count: usize) -> anyhow::Result<
     println!("\n🎬 Executing scenario: {}", scenario);
 
     let start_time = std::time::Instant::now();
+    let total_bots = bots.len();
 
     for (i, bot) in bots.iter_mut().enumerate() {
         let behavior_id = match scenario {
@@ -237,7 +238,7 @@ async fn run_local_scenario(scenario: &str, bot_count: usize) -> anyhow::Result<
         }
 
         if (i + 1) % 50 == 0 {
-            println!(" {}/{}", i + 1, bots.len());
+            println!(" {}/{}", i + 1, total_bots);
         }
     }
 

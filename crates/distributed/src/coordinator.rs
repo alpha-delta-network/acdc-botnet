@@ -232,8 +232,8 @@ impl BotOrchestration for Coordinator {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_coordinator_creation() {
+    #[tokio::test]
+    async fn test_coordinator_creation() {
         let coordinator = Coordinator::new();
         assert_eq!(coordinator.worker_count(), 0);
     }

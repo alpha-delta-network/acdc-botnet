@@ -18,4 +18,4 @@ pub use error::{BotError, Result};
 pub use identity::{Identity, IdentityGenerator};
 pub use scheduler::{Scheduler, Task};
 pub use state::{BotState, StateTransition};
-pub use wallet::{Balance, ChainId, Wallet};
+pub use wallet::{Balance, ChainId, Token, Wallet};
