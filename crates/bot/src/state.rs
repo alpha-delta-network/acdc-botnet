@@ -2,7 +2,6 @@
 ///
 /// Provides type-safe state transitions using phantom types to encode
 /// bot lifecycle states at compile time.
-use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 

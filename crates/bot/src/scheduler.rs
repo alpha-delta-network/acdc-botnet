@@ -4,7 +4,7 @@
 /// - One-time tasks
 /// - Recurring tasks
 /// - Delayed execution
-use crate::{BotError, Result};
+use crate::Result;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use tokio::time::{interval_at, sleep, Duration, Instant};

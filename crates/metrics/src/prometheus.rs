@@ -4,14 +4,11 @@
 /// Provides real-time visibility into bot operations, scenario execution,
 /// and system health.
 use crate::aggregator::MetricsAggregator;
-use crate::event::BotEvent;
 use anyhow::Result;
-use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
-use tokio::time;
 
 /// Prometheus metrics exporter
 pub struct PrometheusExporter {

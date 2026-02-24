@@ -1,4 +1,4 @@
-/// Metrics exporter
+// Metrics exporter
 // Placeholder for Phase 5 task #22
 
 pub struct MetricsExporter;
