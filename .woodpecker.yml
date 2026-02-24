@@ -14,12 +14,9 @@ steps:
       - rustup component add --toolchain nightly rustfmt
       - cargo +nightly fmt --all -- --check
     volumes:
-      - /var/cache/sccache:/sccache
       - /var/cache/cargo:/cargo_cache
     environment:
       CARGO_HOME: /cargo_cache
-      SCCACHE_DIR: /sccache
-      RUSTC_WRAPPER: sccache
       CARGO_INCREMENTAL: 0
 
   - name: clippy
@@ -29,12 +26,9 @@ steps:
       - rustup component add clippy
       - cargo clippy --all-targets --all-features -- -D warnings
     volumes:
-      - /var/cache/sccache:/sccache
       - /var/cache/cargo:/cargo_cache
     environment:
       CARGO_HOME: /cargo_cache
-      SCCACHE_DIR: /sccache
-      RUSTC_WRAPPER: sccache
       CARGO_INCREMENTAL: 0
 
   - name: test
@@ -43,12 +37,9 @@ steps:
     commands:
       - cargo test --release --all-features
     volumes:
-      - /var/cache/sccache:/sccache
       - /var/cache/cargo:/cargo_cache
     environment:
       CARGO_HOME: /cargo_cache
-      SCCACHE_DIR: /sccache
-      RUSTC_WRAPPER: sccache
       CARGO_INCREMENTAL: 0
 
   - name: build
@@ -57,12 +48,9 @@ steps:
     commands:
       - cargo build --release --all-features
     volumes:
-      - /var/cache/sccache:/sccache
       - /var/cache/cargo:/cargo_cache
     environment:
       CARGO_HOME: /cargo_cache
-      SCCACHE_DIR: /sccache
-      RUSTC_WRAPPER: sccache
       CARGO_INCREMENTAL: 0
 
   - name: doc-check
@@ -71,12 +59,9 @@ steps:
     commands:
       - cargo doc --no-deps --all-features
     volumes:
-      - /var/cache/sccache:/sccache
       - /var/cache/cargo:/cargo_cache
     environment:
       CARGO_HOME: /cargo_cache
-      SCCACHE_DIR: /sccache
-      RUSTC_WRAPPER: sccache
       CARGO_INCREMENTAL: 0
 
 labels:
