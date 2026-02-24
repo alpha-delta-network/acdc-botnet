@@ -2,10 +2,9 @@
 ///
 /// Generates cryptographic identities (keypairs and addresses) for both
 /// Alpha (ax1 bech32 addresses) and Delta (dx1 bech32 addresses) chains.
-
 use crate::{BotError, Result};
-use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer};
 use blake2::{Blake2s256, Digest};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 
@@ -56,18 +55,17 @@ impl Identity {
         // Convert to bech32
         // Note: For production, use proper bech32 encoding
         // This is a simplified version for the testbot framework
-        let encoded = bech32::encode(
-            prefix,
-            address_bytes.to_vec(),
-            bech32::Variant::Bech32,
-        ).map_err(|e| BotError::IdentityError(format!("Bech32 encoding failed: {}", e)))?;
+        let encoded = bech32::encode(prefix, address_bytes.to_vec(), bech32::Variant::Bech32)
+            .map_err(|e| BotError::IdentityError(format!("Bech32 encoding failed: {}", e)))?;
 
         Ok(encoded)
     }
 
     /// Sign a message with this identity
     pub fn sign(&self, message: &[u8]) -> Result<Signature> {
-        let signing_key = self.signing_key.as_ref()
+        let signing_key = self
+            .signing_key
+            .as_ref()
             .ok_or_else(|| BotError::IdentityError("No signing key available".to_string()))?;
 
         Ok(signing_key.sign(message))
@@ -75,7 +73,9 @@ impl Identity {
 
     /// Get the verifying key
     pub fn verifying_key(&self) -> Result<VerifyingKey> {
-        let signing_key = self.signing_key.as_ref()
+        let signing_key = self
+            .signing_key
+            .as_ref()
             .ok_or_else(|| BotError::IdentityError("No signing key available".to_string()))?;
 
         Ok(signing_key.verifying_key())
@@ -149,7 +149,8 @@ mod tests {
     #[test]
     fn test_identity_generation() {
         let generator = IdentityGenerator::new();
-        let identity = generator.generate("test-bot-1".to_string())
+        let identity = generator
+            .generate("test-bot-1".to_string())
             .expect("Failed to generate identity");
 
         assert!(identity.alpha_address.starts_with("ax"));
@@ -160,7 +161,8 @@ mod tests {
     #[test]
     fn test_batch_generation() {
         let generator = IdentityGenerator::new();
-        let identities = generator.generate_batch("bot", 10)
+        let identities = generator
+            .generate_batch("bot", 10)
             .expect("Failed to generate batch");
 
         assert_eq!(identities.len(), 10);
@@ -186,15 +188,16 @@ mod tests {
     #[test]
     fn test_signing() {
         let generator = IdentityGenerator::new();
-        let identity = generator.generate("signer-bot".to_string())
+        let identity = generator
+            .generate("signer-bot".to_string())
             .expect("Failed to generate identity");
 
         let message = b"test message";
-        let signature = identity.sign(message)
-            .expect("Failed to sign message");
+        let signature = identity.sign(message).expect("Failed to sign message");
 
         // Verify the signature
-        let verifying_key = identity.verifying_key()
+        let verifying_key = identity
+            .verifying_key()
             .expect("Failed to get verifying key");
 
         assert!(verifying_key.verify(message, &signature).is_ok());

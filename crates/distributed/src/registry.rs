@@ -45,9 +45,7 @@ impl WorkerRegistry {
     pub fn update_heartbeat(&self, worker_id: &str, healthy: bool) -> Result<()> {
         let mut workers = self.workers.write();
 
-        let entry = workers
-            .get_mut(worker_id)
-            .context("Worker not found")?;
+        let entry = workers.get_mut(worker_id).context("Worker not found")?;
 
         entry.last_heartbeat_ms = current_time_ms();
         entry.healthy = healthy;
@@ -74,11 +72,7 @@ impl WorkerRegistry {
 
     /// Get healthy worker count
     pub fn healthy_worker_count(&self) -> usize {
-        self.workers
-            .read()
-            .values()
-            .filter(|w| w.healthy)
-            .count()
+        self.workers.read().values().filter(|w| w.healthy).count()
     }
 
     /// Get total capacity across all workers

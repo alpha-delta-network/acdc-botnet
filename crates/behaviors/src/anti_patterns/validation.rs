@@ -28,7 +28,9 @@ impl InvalidFormat {
         // Submit malformed transaction
         // Expected: "Parse error" with field details
 
-        Ok(BehaviorResult::error("Parse error: missing field 'to' (expected)"))
+        Ok(BehaviorResult::error(
+            "Parse error: missing field 'to' (expected)",
+        ))
     }
 }
 
@@ -43,6 +45,8 @@ impl MissingFields {
         // Submit transaction missing required fields
         // Expected: "Validation error" listing missing fields
 
-        Ok(BehaviorResult::error("Missing required fields: amount, nonce (expected)"))
+        Ok(BehaviorResult::error(
+            "Missing required fields: amount, nonce (expected)",
+        ))
     }
 }

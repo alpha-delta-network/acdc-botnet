@@ -11,7 +11,10 @@ pub struct FrontRunning {
 
 impl FrontRunning {
     pub async fn execute(&self, context: &BotContext) -> Result<BehaviorResult> {
-        tracing::warn!("ATTACK: Front-running with {}% gas premium", self.gas_premium);
+        tracing::warn!(
+            "ATTACK: Front-running with {}% gas premium",
+            self.gas_premium
+        );
 
         // Monitor mempool for profitable txs
         // Submit same tx with higher gas
@@ -35,7 +38,9 @@ impl SandwichAttack {
         // Front-run + back-run victim's trade
         // Expected: Slippage protection, MEV mitigation
 
-        Ok(BehaviorResult::success("Sandwich attempted (victim protected by slippage)"))
+        Ok(BehaviorResult::success(
+            "Sandwich attempted (victim protected by slippage)",
+        ))
     }
 }
 

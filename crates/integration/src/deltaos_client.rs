@@ -1,7 +1,6 @@
 /// DeltaOS REST API client
 ///
 /// Provides HTTP client for DeltaOS DEX, perpetuals, and oracle endpoints
-
 use anyhow::{Context, Result};
 use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
@@ -41,7 +40,8 @@ impl DeltaOSClient {
     /// Broadcast a transaction
     pub async fn broadcast_transaction(&self, tx_bytes: &[u8]) -> Result<String> {
         let url = format!("{}/mainnet/transaction/broadcast", self.base_url);
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .header("Content-Type", "application/octet-stream")
             .body(tx_bytes.to_vec())
@@ -63,11 +63,7 @@ impl DeltaOSClient {
     /// Submit a DEX order
     pub async fn submit_order(&self, order: &Order) -> Result<String> {
         let url = format!("{}/mainnet/dex/order", self.base_url);
-        let response = self.client
-            .post(&url)
-            .json(order)
-            .send()
-            .await?;
+        let response = self.client.post(&url).json(order).send().await?;
 
         self.handle_response::<OrderResponse>(response)
             .await
@@ -91,11 +87,7 @@ impl DeltaOSClient {
     /// Open a perpetual position
     pub async fn open_position(&self, position: &PositionRequest) -> Result<String> {
         let url = format!("{}/mainnet/perpetuals/open", self.base_url);
-        let response = self.client
-            .post(&url)
-            .json(position)
-            .send()
-            .await?;
+        let response = self.client.post(&url).json(position).send().await?;
 
         self.handle_response::<PositionResponse>(response)
             .await
@@ -127,11 +119,17 @@ impl DeltaOSClient {
     async fn handle_response<T: for<'de> Deserialize<'de>>(&self, response: Response) -> Result<T> {
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             anyhow::bail!("HTTP error {}: {}", status, error_text);
         }
 
-        let body = response.text().await.context("Failed to read response body")?;
+        let body = response
+            .text()
+            .await
+            .context("Failed to read response body")?;
         serde_json::from_str(&body).context("Failed to deserialize response")
     }
 }
@@ -157,8 +155,8 @@ pub struct OrderLevel {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Order {
     pub pair: String,
-    pub side: String,  // "buy" or "sell"
-    pub order_type: String,  // "limit" or "market"
+    pub side: String,       // "buy" or "sell"
+    pub order_type: String, // "limit" or "market"
     pub price: Option<String>,
     pub quantity: String,
 }
@@ -172,7 +170,7 @@ struct OrderResponse {
 pub struct Position {
     pub position_id: String,
     pub pair: String,
-    pub side: String,  // "long" or "short"
+    pub side: String, // "long" or "short"
     pub size: String,
     pub entry_price: String,
     pub liquidation_price: String,

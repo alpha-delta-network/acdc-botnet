@@ -1,7 +1,6 @@
 /// Worker daemon for distributed bot orchestration
 ///
 /// Connects to coordinator, spawns bots locally, reports metrics
-
 use crate::proto::{bot_orchestration_client::BotOrchestrationClient, *};
 use anyhow::Result;
 use std::time::Duration;
@@ -20,18 +19,18 @@ pub struct Worker {
 
 impl Worker {
     /// Create a new worker
-    pub fn new(
-        worker_id: String,
-        coordinator_addr: String,
-        max_bots: u32,
-    ) -> Self {
+    pub fn new(worker_id: String, coordinator_addr: String, max_bots: u32) -> Self {
         Self {
             worker_id,
             coordinator_addr,
             max_bots,
             cpu_cores: num_cpus::get() as u32,
             memory_bytes: get_memory_bytes(),
-            capabilities: vec!["trader".to_string(), "user".to_string(), "governor".to_string()],
+            capabilities: vec![
+                "trader".to_string(),
+                "user".to_string(),
+                "governor".to_string(),
+            ],
         }
     }
 
@@ -110,7 +109,7 @@ impl Worker {
         let request = tonic::Request::new(WorkerHealth {
             worker_id: self.worker_id.clone(),
             healthy: true,
-            active_bots: 0,  // TODO: Track actual bot count
+            active_bots: 0, // TODO: Track actual bot count
             timestamp_ms: current_time_ms(),
         });
 
@@ -125,11 +124,17 @@ impl Worker {
                 // TODO: Graceful shutdown
             }
             Ok(coordinator_directive::Action::SpawnBots) => {
-                info!("Received spawn directive for {} bots", directive.spawn_specs.len());
+                info!(
+                    "Received spawn directive for {} bots",
+                    directive.spawn_specs.len()
+                );
                 // TODO: Spawn bots
             }
             Ok(coordinator_directive::Action::StopBots) => {
-                info!("Received stop directive for {} bots", directive.stop_bot_ids.len());
+                info!(
+                    "Received stop directive for {} bots",
+                    directive.stop_bot_ids.len()
+                );
                 // TODO: Stop bots
             }
             Err(_) => {

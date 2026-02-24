@@ -2,7 +2,6 @@
 ///
 /// Provides type-safe state transitions using phantom types to encode
 /// bot lifecycle states at compile time.
-
 use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
@@ -121,8 +120,7 @@ impl StateMachine<Initializing> {
     }
 
     pub fn fail(mut self, message: String) -> StateMachine<Error> {
-        let transition = StateTransition::new(self.current, BotState::Error)
-            .with_message(message);
+        let transition = StateTransition::new(self.current, BotState::Error).with_message(message);
         self.history.push(transition);
         StateMachine {
             current: BotState::Error,
@@ -154,8 +152,7 @@ impl StateMachine<Running> {
     }
 
     pub fn fail(mut self, message: String) -> StateMachine<Error> {
-        let transition = StateTransition::new(self.current, BotState::Error)
-            .with_message(message);
+        let transition = StateTransition::new(self.current, BotState::Error).with_message(message);
         self.history.push(transition);
         StateMachine {
             current: BotState::Error,
@@ -263,6 +260,9 @@ mod tests {
         assert_eq!(sm.current_state(), BotState::Error);
 
         let last_transition = sm.history().last().unwrap();
-        assert_eq!(last_transition.message, Some("Initialization failed".to_string()));
+        assert_eq!(
+            last_transition.message,
+            Some("Initialization failed".to_string())
+        );
     }
 }

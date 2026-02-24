@@ -1,7 +1,6 @@
 /// Bot role implementations
 ///
 /// This module provides concrete bot roles that implement the Bot trait.
-
 pub mod general_user;
 pub mod trader;
 

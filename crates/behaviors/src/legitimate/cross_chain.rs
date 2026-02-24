@@ -1,5 +1,5 @@
 /// Cross-chain behavior patterns
-use adnet_testbot::{BehaviorResult, BotContext, Result, Balance};
+use adnet_testbot::{Balance, BehaviorResult, BotContext, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 

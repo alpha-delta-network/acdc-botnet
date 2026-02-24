@@ -103,7 +103,10 @@ async fn main() -> anyhow::Result<()> {
             worker_id,
         } => {
             let worker_id = worker_id.unwrap_or_else(|| {
-                format!("worker-{}", uuid::Uuid::new_v4().to_string()[..8].to_string())
+                format!(
+                    "worker-{}",
+                    uuid::Uuid::new_v4().to_string()[..8].to_string()
+                )
             });
 
             println!(
@@ -134,7 +137,10 @@ async fn run_scenario(
     bot_count: usize,
 ) -> anyhow::Result<()> {
     println!("📊 Running scenario: {}", scenario);
-    println!("   Mode: {}", if distributed { "distributed" } else { "local" });
+    println!(
+        "   Mode: {}",
+        if distributed { "distributed" } else { "local" }
+    );
     println!("   Bots: {}", bot_count);
 
     if let Some(d) = duration {
@@ -170,12 +176,8 @@ async fn run_local_scenario(scenario: &str, bot_count: usize) -> anyhow::Result<
 
         // Create bot based on scenario
         let bot: Box<dyn Bot> = match scenario {
-            "alpha-transfer" | "simple-transfer" => {
-                Box::new(GeneralUserBot::new(bot_id))
-            }
-            "delta-trade" | "spot-trade" => {
-                Box::new(TraderBot::new(bot_id))
-            }
+            "alpha-transfer" | "simple-transfer" => Box::new(GeneralUserBot::new(bot_id)),
+            "delta-trade" | "spot-trade" => Box::new(TraderBot::new(bot_id)),
             _ => {
                 // Default to general user
                 Box::new(GeneralUserBot::new(bot_id))

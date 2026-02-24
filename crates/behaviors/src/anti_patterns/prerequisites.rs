@@ -13,7 +13,9 @@ impl UnstakedVoting {
         // Attempt to vote with 0 stake
         // Expected: "Insufficient stake" error
 
-        Ok(BehaviorResult::error("Insufficient stake for voting (expected)"))
+        Ok(BehaviorResult::error(
+            "Insufficient stake for voting (expected)",
+        ))
     }
 }
 
@@ -28,7 +30,9 @@ impl UnregisteredGovernor {
         // Non-governor tries to create proposal
         // Expected: "Not a registered governor" error
 
-        Ok(BehaviorResult::error("Not a registered governor (expected)"))
+        Ok(BehaviorResult::error(
+            "Not a registered governor (expected)",
+        ))
     }
 }
 
@@ -43,6 +47,8 @@ impl MissingPriorLock {
         // Try to unlock with invalid unlock_id
         // Expected: "No corresponding lock found" error
 
-        Ok(BehaviorResult::error("No corresponding lock found (expected)"))
+        Ok(BehaviorResult::error(
+            "No corresponding lock found (expected)",
+        ))
     }
 }

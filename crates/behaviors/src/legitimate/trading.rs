@@ -100,11 +100,7 @@ mod tests {
 
     #[test]
     fn test_market_order_creation() {
-        let behavior = SpotMarketOrder::new(
-            "AX/DX".to_string(),
-            OrderSide::Buy,
-            "100".to_string(),
-        );
+        let behavior = SpotMarketOrder::new("AX/DX".to_string(), OrderSide::Buy, "100".to_string());
         assert_eq!(behavior.pair, "AX/DX");
     }
 }

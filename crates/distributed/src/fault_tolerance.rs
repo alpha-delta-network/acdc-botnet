@@ -164,7 +164,10 @@ impl CoordinatorCheckpoint {
 
     /// Load coordinator state from disk
     pub async fn load(&self) -> Result<CoordinatorState> {
-        info!("Loading coordinator checkpoint from {}", self.checkpoint_path);
+        info!(
+            "Loading coordinator checkpoint from {}",
+            self.checkpoint_path
+        );
 
         let json = tokio::fs::read_to_string(&self.checkpoint_path).await?;
         let state = serde_json::from_str(&json)?;

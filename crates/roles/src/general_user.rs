@@ -1,8 +1,7 @@
 /// General user bot role
 ///
 /// Simulates regular user operations like transfers and balance queries
-
-use adnet_testbot::{Bot, BotContext, BehaviorResult, Result};
+use adnet_testbot::{BehaviorResult, Bot, BotContext, Result};
 use async_trait::async_trait;
 
 pub struct GeneralUserBot {
@@ -12,10 +11,7 @@ pub struct GeneralUserBot {
 
 impl GeneralUserBot {
     pub fn new(id: String) -> Self {
-        Self {
-            id,
-            context: None,
-        }
+        Self { id, context: None }
     }
 }
 
@@ -28,7 +24,11 @@ impl Bot for GeneralUserBot {
     }
 
     async fn execute_behavior(&mut self, behavior_id: &str) -> Result<BehaviorResult> {
-        tracing::info!("GeneralUserBot {} executing behavior: {}", self.id, behavior_id);
+        tracing::info!(
+            "GeneralUserBot {} executing behavior: {}",
+            self.id,
+            behavior_id
+        );
 
         // TODO: Implement actual behaviors
         Ok(BehaviorResult::success(format!("Executed {}", behavior_id)))

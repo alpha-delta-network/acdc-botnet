@@ -15,7 +15,9 @@ impl Equivocation {
         // Sign two conflicting blocks at same height
         // Expected: Slashing via cryptographic evidence
 
-        Ok(BehaviorResult::error("Equivocation detected, validator slashed"))
+        Ok(BehaviorResult::error(
+            "Equivocation detected, validator slashed",
+        ))
     }
 }
 
@@ -32,7 +34,9 @@ impl CensorshipAttack {
         // Refuse to include transactions from target
         // Expected: Transaction eventually included by honest validator
 
-        Ok(BehaviorResult::success("Censorship attempted (transaction eventually included)"))
+        Ok(BehaviorResult::success(
+            "Censorship attempted (transaction eventually included)",
+        ))
     }
 }
 
@@ -44,7 +48,10 @@ pub struct InvalidBlockProposal {
 
 impl InvalidBlockProposal {
     pub async fn execute(&self, context: &BotContext) -> Result<BehaviorResult> {
-        tracing::warn!("ATTACK: Invalid block with {} bad txs", self.invalid_tx_count);
+        tracing::warn!(
+            "ATTACK: Invalid block with {} bad txs",
+            self.invalid_tx_count
+        );
 
         // Propose block with invalid transactions
         // Expected: Block rejected, validator potentially slashed

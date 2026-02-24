@@ -2,12 +2,11 @@
 ///
 /// Defines the core Bot trait that all bot implementations must follow.
 /// Uses async trait for lifecycle methods: setup, execute, teardown.
-
-use crate::{ExecutionContext, Identity, Wallet, Result};
+use crate::{ExecutionContext, Identity, Result, Wallet};
 use async_trait::async_trait;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use parking_lot::RwLock;
 
 /// Context provided to bots during their lifecycle
 #[derive(Debug, Clone)]

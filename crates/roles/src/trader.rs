@@ -1,8 +1,7 @@
 /// Trader bot role
 ///
 /// Simulates DEX trading operations
-
-use adnet_testbot::{Bot, BotContext, BehaviorResult, Result};
+use adnet_testbot::{BehaviorResult, Bot, BotContext, Result};
 use async_trait::async_trait;
 
 pub struct TraderBot {
@@ -12,10 +11,7 @@ pub struct TraderBot {
 
 impl TraderBot {
     pub fn new(id: String) -> Self {
-        Self {
-            id,
-            context: None,
-        }
+        Self { id, context: None }
     }
 }
 

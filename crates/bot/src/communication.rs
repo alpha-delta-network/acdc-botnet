@@ -1,12 +1,11 @@
 /// Inter-bot communication and message passing
 ///
 /// Provides a lightweight message bus for bots to coordinate actions
-
 use crate::{BotError, Result};
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
 use tokio::sync::broadcast;
 
 /// Message types for bot communication
@@ -47,7 +46,12 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn new(from: String, to: String, msg_type: MessageType, content: serde_json::Value) -> Self {
+    pub fn new(
+        from: String,
+        to: String,
+        msg_type: MessageType,
+        content: serde_json::Value,
+    ) -> Self {
         Self {
             from,
             to,
@@ -118,9 +122,9 @@ impl MessageBus {
         } else {
             // Send to specific bot
             let channels = self.channels.read();
-            let channel = channels
-                .get(&message.to)
-                .ok_or_else(|| BotError::CommunicationError(format!("Bot {} not found", message.to)))?;
+            let channel = channels.get(&message.to).ok_or_else(|| {
+                BotError::CommunicationError(format!("Bot {} not found", message.to))
+            })?;
 
             channel
                 .send(message)
@@ -227,7 +231,8 @@ mod tests {
             "bot-2".to_string(),
             MessageType::Request,
             serde_json::json!({"query": "balance"}),
-        ).with_correlation_id("req-123".to_string());
+        )
+        .with_correlation_id("req-123".to_string());
 
         assert_eq!(msg.correlation_id, Some("req-123".to_string()));
     }

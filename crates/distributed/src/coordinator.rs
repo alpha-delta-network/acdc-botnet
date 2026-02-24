@@ -1,7 +1,6 @@
 /// Coordinator server for distributed bot orchestration
 ///
 /// Manages worker registration, bot distribution, and metrics aggregation
-
 use crate::proto::{
     bot_orchestration_server::{BotOrchestration, BotOrchestrationServer},
     *,
@@ -96,10 +95,7 @@ impl BotOrchestration for Coordinator {
         }))
     }
 
-    async fn spawn_bot(
-        &self,
-        request: Request<BotSpec>,
-    ) -> Result<Response<BotHandle>, Status> {
+    async fn spawn_bot(&self, request: Request<BotSpec>) -> Result<Response<BotHandle>, Status> {
         let bot_spec = request.into_inner();
 
         info!("Spawning bot: {}", bot_spec.bot_id);
@@ -134,10 +130,7 @@ impl BotOrchestration for Coordinator {
         }))
     }
 
-    async fn get_bot_status(
-        &self,
-        request: Request<BotId>,
-    ) -> Result<Response<BotStatus>, Status> {
+    async fn get_bot_status(&self, request: Request<BotId>) -> Result<Response<BotStatus>, Status> {
         let bot_id = request.into_inner();
 
         // TODO: Query worker for bot status
@@ -210,7 +203,10 @@ impl BotOrchestration for Coordinator {
             let worker = &workers[worker_idx % workers.len()];
 
             // Find or create assignment for this worker
-            if let Some(assignment) = assignments.iter_mut().find(|a| a.worker_id == worker.worker_id) {
+            if let Some(assignment) = assignments
+                .iter_mut()
+                .find(|a| a.worker_id == worker.worker_id)
+            {
                 assignment.bot_specs.push(bot_spec);
             } else {
                 assignments.push(WorkerAssignment {

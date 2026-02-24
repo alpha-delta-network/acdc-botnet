@@ -4,11 +4,10 @@
 /// - One-time tasks
 /// - Recurring tasks
 /// - Delayed execution
-
 use crate::{BotError, Result};
-use tokio::time::{Duration, Instant, interval_at, sleep};
-use std::sync::Arc;
 use parking_lot::Mutex;
+use std::sync::Arc;
+use tokio::time::{interval_at, sleep, Duration, Instant};
 
 /// A scheduled task
 pub struct Task {
@@ -84,13 +83,20 @@ impl Scheduler {
     }
 
     /// Schedule a recurring task
-    pub fn schedule_recurring<F>(&self, id: String, interval_duration: Duration, func: F) -> Result<()>
+    pub fn schedule_recurring<F>(
+        &self,
+        id: String,
+        interval_duration: Duration,
+        func: F,
+    ) -> Result<()>
     where
         F: Fn() -> tokio::task::JoinHandle<()> + Send + Sync + 'static,
     {
         let task = Task {
             id,
-            kind: TaskKind::Recurring { interval: interval_duration },
+            kind: TaskKind::Recurring {
+                interval: interval_duration,
+            },
             func: Arc::new(func),
         };
 
@@ -122,7 +128,9 @@ impl Scheduler {
                         }
                     });
                 }
-                TaskKind::Recurring { interval: interval_duration } => {
+                TaskKind::Recurring {
+                    interval: interval_duration,
+                } => {
                     let func = task.func.clone();
                     let shutdown = self.shutdown.clone();
 
@@ -259,9 +267,7 @@ mod tests {
         let scheduler = Scheduler::new();
 
         scheduler
-            .schedule_immediate("task1".to_string(), || {
-                tokio::spawn(async {})
-            })
+            .schedule_immediate("task1".to_string(), || tokio::spawn(async {}))
             .unwrap();
 
         scheduler

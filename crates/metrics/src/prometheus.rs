@@ -3,7 +3,6 @@
 /// Exposes metrics via HTTP endpoint at /metrics in Prometheus text format.
 /// Provides real-time visibility into bot operations, scenario execution,
 /// and system health.
-
 use crate::aggregator::MetricsAggregator;
 use crate::event::BotEvent;
 use anyhow::Result;
@@ -237,8 +236,7 @@ impl PrometheusExporter {
             "# HELP testbots_uptime_seconds Total uptime in seconds\n\
              # TYPE testbots_uptime_seconds counter\n\
              testbots_uptime_seconds{{{}}} {:.0}\n\n",
-            labels,
-            uptime_secs
+            labels, uptime_secs
         ));
 
         output

@@ -13,7 +13,9 @@ impl TimingCorrelation {
         // Monitor transaction timing to link transfers
         // Expected: Timing randomization, decoy transactions
 
-        Ok(BehaviorResult::success("Some correlation possible (privacy reduced)"))
+        Ok(BehaviorResult::success(
+            "Some correlation possible (privacy reduced)",
+        ))
     }
 }
 
@@ -28,6 +30,8 @@ impl AmountMatching {
         // Link transactions by unique amounts
         // Expected: Amount obfuscation, splitting
 
-        Ok(BehaviorResult::success("Some matching possible (privacy reduced)"))
+        Ok(BehaviorResult::success(
+            "Some matching possible (privacy reduced)",
+        ))
     }
 }

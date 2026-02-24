@@ -34,7 +34,7 @@ struct AggregatorState {
     window_operations: u64,
 
     /// Active bots
-    active_bots: HashMap<String, i64>,  // bot_id -> last_seen_ms
+    active_bots: HashMap<String, i64>, // bot_id -> last_seen_ms
 
     /// Bots by role (for Prometheus metrics)
     bots_by_role: HashMap<String, usize>,
@@ -83,7 +83,11 @@ impl MetricsAggregator {
         let mut state = self.state.write();
 
         match event {
-            BotEvent::BotStarted { bot_id, role, timestamp_ms } => {
+            BotEvent::BotStarted {
+                bot_id,
+                role,
+                timestamp_ms,
+            } => {
                 state.active_bots.insert(bot_id.clone(), *timestamp_ms);
                 *state.bots_by_role.entry(role.clone()).or_insert(0) += 1;
             }
@@ -106,9 +110,15 @@ impl MetricsAggregator {
                 *state.bot_operations.entry(bot_id.clone()).or_insert(0) += 1;
 
                 if *success {
-                    *state.behavior_successes.entry(behavior_id.clone()).or_insert(0) += 1;
+                    *state
+                        .behavior_successes
+                        .entry(behavior_id.clone())
+                        .or_insert(0) += 1;
                 } else {
-                    *state.behavior_failures.entry(behavior_id.clone()).or_insert(0) += 1;
+                    *state
+                        .behavior_failures
+                        .entry(behavior_id.clone())
+                        .or_insert(0) += 1;
                     state.total_errors += 1;
                 }
 
@@ -184,7 +194,7 @@ impl MetricsAggregator {
         }
 
         let value_us = state.latency_histogram.value_at_quantile(percentile);
-        value_us as f64 / 1000.0  // Convert to milliseconds
+        value_us as f64 / 1000.0 // Convert to milliseconds
     }
 
     /// Get p50 latency
@@ -243,7 +253,8 @@ impl MetricsAggregator {
             let failures = state.behavior_failures.get(behavior_id).unwrap_or(&0);
             let total = successes + failures;
             if total > 0 {
-                behavior_success_rates.insert(behavior_id.clone(), *successes as f64 / total as f64);
+                behavior_success_rates
+                    .insert(behavior_id.clone(), *successes as f64 / total as f64);
             }
         }
 

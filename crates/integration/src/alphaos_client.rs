@@ -1,7 +1,6 @@
 /// AlphaOS REST API client
 ///
 /// Provides a comprehensive HTTP client for all AlphaOS endpoints
-
 use anyhow::{Context, Result};
 use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
@@ -41,7 +40,8 @@ impl AlphaOSClient {
     /// Broadcast a transaction
     pub async fn broadcast_transaction(&self, tx_bytes: &[u8]) -> Result<String> {
         let url = format!("{}/testnet/transaction/broadcast", self.base_url);
-        let response = self.client
+        let response = self
+            .client
             .post(&url)
             .header("Content-Type", "application/octet-stream")
             .body(tx_bytes.to_vec())
@@ -113,11 +113,17 @@ impl AlphaOSClient {
     async fn handle_response<T: for<'de> Deserialize<'de>>(&self, response: Response) -> Result<T> {
         let status = response.status();
         if !status.is_success() {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             anyhow::bail!("HTTP error {}: {}", status, error_text);
         }
 
-        let body = response.text().await.context("Failed to read response body")?;
+        let body = response
+            .text()
+            .await
+            .context("Failed to read response body")?;
         serde_json::from_str(&body).context("Failed to deserialize response")
     }
 }

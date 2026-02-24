@@ -48,7 +48,10 @@ pub struct ProposalSpam {
 
 impl ProposalSpam {
     pub async fn execute(&self, context: &BotContext) -> Result<BehaviorResult> {
-        tracing::warn!("ATTACK: Proposal spam DoS with {} proposals", self.spam_count);
+        tracing::warn!(
+            "ATTACK: Proposal spam DoS with {} proposals",
+            self.spam_count
+        );
 
         // Expected: Rate limiting kicks in
         Ok(BehaviorResult::error("Rate limited"))

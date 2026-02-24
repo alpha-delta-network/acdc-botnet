@@ -1,7 +1,6 @@
 /// Adnet CLI client
 ///
 /// Wrapper for executing adnet CLI commands
-
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::process::{Command, Output};

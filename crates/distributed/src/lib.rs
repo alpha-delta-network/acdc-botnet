@@ -1,17 +1,16 @@
 /// Distributed bot orchestration
 ///
 /// Provides gRPC-based coordinator/worker architecture
-
 pub mod coordinator;
-pub mod worker;
+pub mod fault_tolerance;
 pub mod protocol;
 pub mod registry;
-pub mod fault_tolerance;
+pub mod worker;
 
 pub use coordinator::Coordinator;
-pub use worker::Worker;
+pub use fault_tolerance::{BotMigration, CoordinatorCheckpoint, FaultDetector, MetricsBuffer};
 pub use registry::WorkerRegistry;
-pub use fault_tolerance::{FaultDetector, BotMigration, MetricsBuffer, CoordinatorCheckpoint};
+pub use worker::Worker;
 
 // Include generated protobuf code
 pub mod proto {

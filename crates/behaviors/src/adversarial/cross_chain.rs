@@ -17,7 +17,9 @@ impl DoubleSpendAttack {
         // Step 2: Submit two mint requests on Delta with same unlock_id
         // Expected: Second mint rejected (unlock_id already used)
 
-        Ok(BehaviorResult::error("Double-spend prevented by replay protection"))
+        Ok(BehaviorResult::error(
+            "Double-spend prevented by replay protection",
+        ))
     }
 }
 

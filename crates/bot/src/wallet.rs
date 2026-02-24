@@ -4,7 +4,6 @@
 /// - AX (Alpha native token)
 /// - sAX (Shielded AX on Delta)
 /// - DX (Delta native token)
-
 use crate::{BotError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -129,7 +128,10 @@ impl Wallet {
 
     /// Get balance for a token
     pub fn balance(&self, token: &Token) -> Balance {
-        self.balances.get(token).copied().unwrap_or_else(Balance::zero)
+        self.balances
+            .get(token)
+            .copied()
+            .unwrap_or_else(Balance::zero)
     }
 
     /// Credit (add) to balance

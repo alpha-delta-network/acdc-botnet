@@ -1,15 +1,15 @@
+pub mod byzantine;
+pub mod cross_chain;
 /// Adversarial behavior patterns for security testing
 pub mod governance;
-pub mod cross_chain;
 pub mod mev;
-pub mod byzantine;
 pub mod privacy;
 pub mod resource;
 
 // Re-export key attacks
-pub use governance::{SybilAttack, FlashLoanGovernance, ProposalSpam};
+pub use byzantine::{CensorshipAttack, Equivocation, InvalidBlockProposal};
 pub use cross_chain::{DoubleSpendAttack, FinalityBypass, ReplayAttack};
-pub use mev::{FrontRunning, SandwichAttack, LiquidationSniping};
-pub use byzantine::{Equivocation, CensorshipAttack, InvalidBlockProposal};
-pub use privacy::{TimingCorrelation, AmountMatching};
+pub use governance::{FlashLoanGovernance, ProposalSpam, SybilAttack};
+pub use mev::{FrontRunning, LiquidationSniping, SandwichAttack};
+pub use privacy::{AmountMatching, TimingCorrelation};
 pub use resource::{MempoolSpam, StorageBomb};
