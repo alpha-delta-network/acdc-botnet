@@ -21,7 +21,7 @@ pub struct Coordinator {
 impl Coordinator {
     /// Create a new coordinator
     pub fn new() -> Self {
-        let (metrics_tx, mut metrics_rx) = mpsc::channel(1000);
+        let (metrics_tx, mut metrics_rx) = mpsc::channel::<WorkerMetrics>(1000);
 
         // Spawn metrics processor
         tokio::spawn(async move {
