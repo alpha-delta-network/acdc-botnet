@@ -218,11 +218,12 @@ impl BotOrchestration for Coordinator {
             worker_idx += 1;
         }
 
+        let worker_count = assignments.len();
         Ok(Response::new(DistributionPlan {
             scenario_id: scenario.scenario_id,
             assignments,
             success: true,
-            message: format!("Distributed to {} workers", assignments.len()),
+            message: format!("Distributed to {} workers", worker_count),
         }))
     }
 }
