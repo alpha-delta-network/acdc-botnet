@@ -66,5 +66,16 @@ steps:
       CARGO_HOME: /cargo_cache
       CARGO_INCREMENTAL: 0
 
+  - name: radicle-sync
+    image: alpine/git
+    failure: ignore
+    when:
+      - event: push
+        branch: main
+    commands:
+      - apk add -q curl
+      - curl -sfX POST "http://source.ac-dc.network:8766/push/acdc-botnet" && echo "Radicle sync triggered" || echo "Radicle sync failed (non-fatal)"
+
 labels:
   backend: docker
+
