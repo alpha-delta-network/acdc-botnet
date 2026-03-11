@@ -1,0 +1,33 @@
+# .woodpecker/mirror-sync.yml
+when:
+  - event: [push, manual]
+    branch: main
+
+steps:
+  - name: github-sync
+    image: alpine/git
+    failure: ignore
+    environment:
+      GITHUB_TOKEN:
+        from_secret: github_token
+    commands:
+      - |
+        set -e
+        echo "Repo: $CI_REPO_NAME  Token: $([ -n "$GITHUB_TOKEN" ] && echo present || echo MISSING)"
+        git fetch --unshallow 2>/dev/null || true
+        git remote add github "https://x-access-token:$GITHUB_TOKEN@github.com/alpha-delta-network/$CI_REPO_NAME.git" 2>/dev/null || git remote set-url github "https://x-access-token:$GITHUB_TOKEN@github.com/alpha-delta-network/$CI_REPO_NAME.git"
+        for attempt in 1 2 3 4 5; do
+          git push github HEAD:refs/heads/main --force --no-thin && echo "GitHub synced $CI_REPO_NAME" && exit 0
+          echo "Attempt $attempt/5 failed, retrying in 30s..."
+          sleep 30
+        done
+        echo "GitHub sync failed after 5 attempts"
+        exit 1
+
+  - name: radicle-sync
+    image: curlimages/curl:latest
+    when:
+      - event: push
+        branch: main
+    commands:
+      - curl -sfX POST "http://source.ac-dc.network:8766/push/$CI_REPO_NAME"
