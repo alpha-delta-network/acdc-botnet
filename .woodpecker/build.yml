@@ -1,0 +1,81 @@
+when:
+  - event: [push, pull_request, manual]
+
+variables:
+  - &rust_image 'rust-builder:1.92.0-ci'
+
+steps:
+  - name: format-check
+    image: *rust_image
+    pull: true
+    commands:
+      - rustup component add --toolchain nightly rustfmt
+      - cargo +nightly fmt --all -- --check
+    volumes:
+      - /var/cache/cargo:/cargo_cache
+    environment:
+      CARGO_HOME: /cargo_cache
+      CARGO_INCREMENTAL: 0
+
+  - name: clippy
+    image: *rust_image
+    pull: true
+    commands:
+      - apt-get update && apt-get install -y protobuf-compiler
+      - rustup component add clippy
+      - cargo clippy --all-targets --all-features -- -W clippy::all
+    volumes:
+      - /var/cache/cargo:/cargo_cache
+    environment:
+      CARGO_HOME: /cargo_cache
+      CARGO_INCREMENTAL: 0
+
+  - name: test
+    image: *rust_image
+    pull: true
+    commands:
+      - apt-get update && apt-get install -y protobuf-compiler
+      - cargo test --release --all-features
+    volumes:
+      - /var/cache/cargo:/cargo_cache
+    environment:
+      CARGO_HOME: /cargo_cache
+      CARGO_INCREMENTAL: 0
+
+  - name: build
+    image: *rust_image
+    pull: true
+    commands:
+      - apt-get update && apt-get install -y protobuf-compiler
+      - cargo build --release --all-features
+    volumes:
+      - /var/cache/cargo:/cargo_cache
+    environment:
+      CARGO_HOME: /cargo_cache
+      CARGO_INCREMENTAL: 0
+
+  - name: doc-check
+    image: *rust_image
+    pull: true
+    commands:
+      - apt-get update && apt-get install -y protobuf-compiler
+      - cargo doc --no-deps --all-features
+    volumes:
+      - /var/cache/cargo:/cargo_cache
+    environment:
+      CARGO_HOME: /cargo_cache
+      CARGO_INCREMENTAL: 0
+
+  - name: radicle-sync
+    image: alpine/git
+    failure: ignore
+    when:
+      - event: push
+        branch: main
+    commands:
+      - apk add -q curl
+      - curl -sfX POST "http://source.ac-dc.network:8766/push/acdc-botnet" && echo "Radicle sync triggered" || echo "Radicle sync failed (non-fatal)"
+
+labels:
+  backend: docker
+
