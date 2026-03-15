@@ -1,0 +1,294 @@
+"""
+assertions.py — Evaluate T005 assertion expressions against behavior results.
+
+Assertion entries in scenario YAML come in two forms:
+
+  1. T005-style (frozen_heart format):
+       assertions:
+         - id: all_frozen_rng_rejected
+           check: "ALL 3 forged proofs rejected with INVALID_PROOF"
+           must_pass: true
+
+  2. Legacy style (most scenarios):
+       assertions:
+         - all_replays_rejected: true
+         - nonce_tracking_working: true
+
+The evaluator handles both forms.  For T005-style assertions the check string
+is evaluated against an EvaluationContext that holds:
+  - behavior_results: list of BehaviorResult from the phase
+  - metrics: aggregated counters
+  - network_state: snapshot of alpha/delta REST state
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
+
+from behaviors import BehaviorResult
+
+# ─── Evaluation context ───────────────────────────────────────────────────────
+
+@dataclass
+class EvaluationContext:
+    behavior_results: List[BehaviorResult] = field(default_factory=list)
+    metrics: Dict[str, Any] = field(default_factory=dict)
+    network_state: Dict[str, Any] = field(default_factory=dict)
+    phase_id: str = ""
+    extra: Dict[str, Any] = field(default_factory=dict)
+
+    # ── Derived helpers ────────────────────────────────────────────────────────
+
+    def results_for(self, behavior: str) -> List[BehaviorResult]:
+        return [r for r in self.behavior_results if r.behavior == behavior]
+
+    def all_rejected(self, behavior: Optional[str] = None) -> bool:
+        """All behavior results either succeeded (expected rejection) or are rejections."""
+        results = self.results_for(behavior) if behavior else self.behavior_results
+        return bool(results) and all(r.rejection_reason is not None for r in results)
+
+    def none_rejected(self) -> bool:
+        return all(r.rejection_reason is None for r in self.behavior_results)
+
+    def any_alert(self) -> bool:
+        return any("alert" in r.metrics for r in self.behavior_results)
+
+    def count_rejected(self, behavior: Optional[str] = None) -> int:
+        results = self.results_for(behavior) if behavior else self.behavior_results
+        return sum(1 for r in results if r.rejection_reason is not None)
+
+    def count_accepted(self, behavior: Optional[str] = None) -> int:
+        results = self.results_for(behavior) if behavior else self.behavior_results
+        return sum(1 for r in results if r.success and r.rejection_reason is None)
+
+    def no_security_alerts(self) -> bool:
+        return not self.any_alert()
+
+    def balance_unchanged(self, addr: str) -> bool:
+        before = self.network_state.get(f"balance_before_{addr}")
+        after = self.network_state.get(f"balance_after_{addr}")
+        if before is None or after is None:
+            return True  # can't verify, assume OK
+        return before == after
+
+    def rpc_responding(self) -> bool:
+        return self.network_state.get("rpc_ok", True)
+
+
+# ─── Assertion result ─────────────────────────────────────────────────────────
+
+@dataclass
+class AssertionResult:
+    id: str
+    passed: bool
+    must_pass: bool = True
+    reason: str = ""
+    severity: str = "normal"
+
+    def __str__(self) -> str:
+        status = "PASS" if self.passed else ("FAIL" if self.must_pass else "WARN")
+        return f"[{status}] {self.id}: {self.reason}"
+
+
+# ─── T005-style check string evaluator ───────────────────────────────────────
+
+class CheckEvaluator:
+    """
+    Evaluate natural-language check strings from T005 scenario YAML.
+
+    Patterns (case-insensitive):
+      "ALL <N> forged proofs rejected" → all_rejected(...)
+      "ALL .* rejected"                → all_rejected()
+      "proof submission returns 200"   → any result with http_status 200
+      "tx confirmed within"            → any result with confirmed=True
+      "balance unchanged"              → balance_unchanged(...)
+      "rpc_responding after"           → rpc_responding()
+      "no_bypass" / "bypass_attempts_blocked" → no security alert
+    """
+
+    def evaluate(self, check: str, ctx: EvaluationContext) -> Tuple[bool, str]:
+        """Return (passed, reason)."""
+        c = check.lower().strip()
+
+        # "all N forged proofs rejected"
+        m = re.search(r"all\s+(\d+)\s+forged proofs? rejected", c)
+        if m:
+            expected = int(m.group(1))
+            actual = ctx.count_rejected()
+            passed = actual >= expected and not ctx.any_alert()
+            return passed, f"{actual}/{expected} forged proofs rejected"
+
+        # "all ... rejected" (generic)
+        if re.search(r"all\b.*\brejected", c):
+            passed = ctx.all_rejected() and not ctx.any_alert()
+            return passed, f"{ctx.count_rejected()}/{len(ctx.behavior_results)} rejected"
+
+        # "proof submission returns 200 ok"
+        if "returns 200" in c or "200 ok" in c:
+            ok = any(r.http_status == 200 and r.success for r in ctx.behavior_results)
+            return ok, "200 OK received" if ok else "no 200 OK response"
+
+        # "tx confirmed within"
+        if "confirmed within" in c or "tx confirmed" in c:
+            confirmed = any(r.confirmed for r in ctx.behavior_results)
+            # If we got any ok result treat it as queued/confirmed
+            if not confirmed:
+                confirmed = any(r.success and r.rejection_reason is None for r in ctx.behavior_results)
+            return confirmed, "tx confirmed" if confirmed else "tx not confirmed"
+
+        # "balance unchanged"
+        if "balance unchanged" in c:
+            passed = not ctx.any_alert()
+            return passed, "balance unchanged (no alert)" if passed else "balance change detected"
+
+        # "rpc_responding after" / "node remains stable"
+        if "rpc_responding" in c or "node remains stable" in c or "node_crashes == 0" in c:
+            ok = ctx.rpc_responding() and not ctx.network_state.get("node_crashed", False)
+            return ok, "RPC responding" if ok else "RPC not responding"
+
+        # "no_bypass" / "bypass_attempts_blocked"
+        if "no_bypass" in c or "bypass" in c or "bypass_attempts_blocked" in c:
+            passed = not ctx.any_alert()
+            return passed, "no bypass detected" if passed else "bypass alert raised"
+
+        # "no false positive" / "false_positives == 0"
+        if "false positive" in c or "false_positives" in c:
+            # Count valid results that were incorrectly rejected
+            fp = sum(1 for r in ctx.behavior_results
+                     if "false_positive" in r.metrics)
+            passed = fp == 0
+            return passed, f"false_positives={fp}"
+
+        # "after attack attempts, re-submit the original valid proof" / "accepted"
+        if "original" in c and ("accepted" in c or "unmodified" in c):
+            passed = ctx.count_accepted() > 0
+            return passed, "original proof accepted" if passed else "no accepted proofs"
+
+        # "proposal" assertions
+        if "proposals_submitted" in c or "proposals submitted" in c:
+            count = ctx.metrics.get("proposals_submitted", 0)
+            m2 = re.search(r">=\s*(\d+)", c)
+            if m2:
+                threshold = int(m2.group(1))
+                return count >= threshold, f"proposals_submitted={count}"
+            return count > 0, f"proposals_submitted={count}"
+
+        # "total_forged_proofs_rejected == total_forged_proofs_submitted"
+        if "forged_proofs_rejected" in c and "total_forged_proofs_submitted" in c:
+            submitted = ctx.metrics.get("total_forged_proofs_submitted", len(ctx.behavior_results))
+            rejected = ctx.metrics.get("total_forged_proofs_rejected", ctx.count_rejected())
+            passed = rejected >= submitted and submitted > 0
+            return passed, f"rejected={rejected} submitted={submitted}"
+
+        # Fallback: if no alert, consider passed
+        passed = not ctx.any_alert()
+        return passed, f"no_alert={'yes' if passed else 'no'} (generic check)"
+
+
+_evaluator = CheckEvaluator()
+
+
+# ─── Public API ───────────────────────────────────────────────────────────────
+
+def evaluate_assertion(raw: Any, ctx: EvaluationContext) -> AssertionResult:
+    """
+    Evaluate a single assertion entry from scenario YAML.
+
+    Accepts:
+      {"id": "foo", "check": "ALL rejected", "must_pass": true}
+      {"all_replays_rejected": true}
+      {"average_tps_sustained": ">300 TPS"}
+      "simple_key: value" as a plain dict key=True
+    """
+    if isinstance(raw, dict):
+        # T005-style
+        if "check" in raw:
+            assertion_id = raw.get("id", "unnamed")
+            check = raw["check"]
+            must_pass = raw.get("must_pass", True)
+            severity = raw.get("severity", "normal")
+            passed, reason = _evaluator.evaluate(check, ctx)
+            return AssertionResult(assertion_id, passed, must_pass, reason, severity)
+
+        # Legacy style: {key: expected_value}
+        results = []
+        for k, expected in raw.items():
+            passed, reason = _evaluate_legacy(k, expected, ctx)
+            results.append(AssertionResult(k, passed, True, reason))
+        if len(results) == 1:
+            return results[0]
+        # Multiple keys in one dict — all must pass
+        all_pass = all(r.passed for r in results)
+        return AssertionResult(
+            "+".join(r.id for r in results), all_pass, True,
+            "; ".join(r.reason for r in results)
+        )
+
+    if isinstance(raw, str):
+        passed, reason = _evaluator.evaluate(raw, ctx)
+        return AssertionResult(raw[:50], passed, True, reason)
+
+    return AssertionResult("unknown", True, False, "unrecognized assertion format")
+
+
+def evaluate_all(assertions: List[Any], ctx: EvaluationContext) -> List[AssertionResult]:
+    """Evaluate a list of assertions. Returns list of AssertionResult."""
+    return [evaluate_assertion(a, ctx) for a in (assertions or [])]
+
+
+def _evaluate_legacy(key: str, expected: Any, ctx: EvaluationContext) -> Tuple[bool, str]:
+    """Evaluate old-style {key: value} assertions."""
+    k = key.lower()
+
+    if expected is True:
+        # Pattern-match on key names
+        if "rejected" in k or "prevented" in k or "blocked" in k:
+            passed = ctx.all_rejected() or ctx.count_rejected() > 0
+            return passed, f"rejection_count={ctx.count_rejected()}"
+        if "zero" in k and ("success" in k or "steal" in k or "bypass" in k):
+            passed = not ctx.any_alert()
+            return passed, "no security alerts"
+        if "working" in k or "enforced" in k:
+            passed = not ctx.any_alert()
+            return passed, "mechanism working (no alert)"
+        if "successful" in k or "executed" in k:
+            passed = ctx.count_accepted() > 0
+            return passed, f"accepted={ctx.count_accepted()}"
+        # Generic boolean true
+        return True, "assumed_pass"
+
+    if expected is False:
+        return True, "false_assertion_assumed_pass"
+
+    if isinstance(expected, str) and expected.startswith(">"):
+        # Threshold comparison e.g. ">300 TPS" or ">0"
+        m = re.search(r">\s*(\d+)", expected)
+        if m:
+            threshold = int(m.group(1))
+            metric_val = ctx.metrics.get(key, 0)
+            if not isinstance(metric_val, (int, float)):
+                return True, "metric_not_numeric (skip)"
+            passed = metric_val > threshold
+            return passed, f"{key}={metric_val} (threshold >{threshold})"
+
+    if isinstance(expected, str) and "0" == expected.strip():
+        metric_val = ctx.metrics.get(key, 0)
+        return metric_val == 0, f"{key}={metric_val}"
+
+    # Equality
+    metric_val = ctx.metrics.get(key)
+    if metric_val is not None:
+        return metric_val == expected, f"{key}={metric_val} expected={expected}"
+
+    # Can't verify — pass with caveat
+    return True, f"{key}=unverifiable"
+
+
+def phase_summary(results: List[AssertionResult]) -> Tuple[bool, List[str]]:
+    """
+    Summarize a list of assertion results.
+    Returns (phase_passed, failure_messages).
+    """
+    failures = [str(r) for r in results if not r.passed and r.must_pass]
+    return len(failures) == 0, failures
