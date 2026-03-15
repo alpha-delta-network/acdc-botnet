@@ -1,0 +1,277 @@
+metadata:
+  id: pool_dos_extreme_heights
+  version: "1.0.0"
+  created: "2026-03-15"
+  category: security
+  severity: medium
+  description: |
+    DoS resilience test covering three attack surfaces:
+    1. Mempool saturation via high-volume low-fee spam
+    2. Extreme block height references (u64 boundary, future heights)
+    3. Proof pool flooding with invalid proofs
+
+    Grounded in:
+      - Consensys §4.1: unbounded mempool growth
+      - OtterSec §3: extreme block height integer overflow
+      - OtterSec §4: fee drain via minimum-fee spam
+
+    Pass: network remains responsive under all attack conditions.
+    The goal is NOT to bring down the network, but to verify bounded degradation.
+
+  success_criteria:
+    - mempool_bounded: true
+    - no_node_crash: true
+    - rpc_responsive: true     # latency < 5s during all attack phases
+    - extreme_heights_rejected_gracefully: true
+
+  network:
+    type: testnet
+    nodes_required: 5          # all validators must survive
+    keys_file: /tmp/testnet-keys-{deploy_id}.yaml
+    network_id: 13
+
+setup:
+  wallets:
+    - id: spammer_1
+      source: keys.funded_wallets[5]
+      role: spammer
+    - id: spammer_2
+      source: keys.funded_wallets[6]
+      role: spammer
+    - id: spammer_3
+      source: keys.funded_wallets[7]
+      role: spammer
+    - id: spammer_4
+      source: keys.funded_wallets[8]
+      role: spammer
+    - id: spammer_5
+      source: keys.funded_wallets[9]
+      role: spammer
+    - id: height_attacker
+      source: keys.funded_wallets[10]
+      role: attacker
+    - id: proof_flooder_1
+      source: keys.funded_wallets[11]
+      role: attacker
+    - id: proof_flooder_2
+      source: keys.funded_wallets[12]
+      role: attacker
+    - id: proof_flooder_3
+      source: keys.funded_wallets[13]
+      role: attacker
+    - id: monitor
+      source: keys.funded_wallets[14]
+      role: monitor     # legitimate user during attack — monitors latency
+
+  baseline_measurement:
+    description: "Measure normal RPC latency before attack"
+    script: measure_rpc_latency
+    store_as: baseline_latency_ms
+
+phases:
+
+  - id: mempool_saturation
+    description: |
+      5 spammers submit minimum-fee transactions at 400 tx/min each (2000 total/min)
+      for 5 minutes (10,000 total transactions).
+      Mempool must evict lowest-fee transactions rather than grow unboundedly.
+    duration_sec: 300
+    concurrent_bots: 6   # 5 spammers + 1 monitor
+    actions:
+      - bot: spammer_1
+        behavior: flood_mempool
+        params:
+          tx_per_minute: 400
+          fee: minimum     # lowest possible fee
+          amount: 1        # minimum amount
+          recipient: spammer_2.alpha_addr
+          duration_sec: 300
+      - bot: spammer_2
+        behavior: flood_mempool
+        params:
+          tx_per_minute: 400
+          fee: minimum
+          amount: 1
+          recipient: spammer_3.alpha_addr
+          duration_sec: 300
+      - bot: spammer_3
+        behavior: flood_mempool
+        params:
+          tx_per_minute: 400
+          fee: minimum
+          amount: 1
+          recipient: spammer_4.alpha_addr
+          duration_sec: 300
+      - bot: spammer_4
+        behavior: flood_mempool
+        params:
+          tx_per_minute: 400
+          fee: minimum
+          amount: 1
+          recipient: spammer_5.alpha_addr
+          duration_sec: 300
+      - bot: spammer_5
+        behavior: flood_mempool
+        params:
+          tx_per_minute: 400
+          fee: minimum
+          amount: 1
+          recipient: spammer_1.alpha_addr
+          duration_sec: 300
+      - bot: monitor
+        behavior: measure_latency
+        params:
+          interval_sec: 10
+          endpoint: /testnet/block/height/latest
+          alert_threshold_ms: 5000
+          duration_sec: 300
+    assertions:
+      - id: mempool_size_bounded
+        check: |
+          At no point during attack: mempool_size > configured_max_mempool_size.
+          (Query via GET /testnet/mempool/size or node metrics endpoint)
+        must_pass: true
+      - id: blocks_still_produced
+        check: "Block height advances during saturation phase (≥5 blocks in 300s)"
+        must_pass: true
+      - id: rpc_latency_acceptable
+        check: "monitor reports: 95th percentile latency < 5000ms during attack"
+        must_pass: true
+      - id: legitimate_tx_eventually_confirms
+        check: |
+          monitor bot submits one normal-fee transaction mid-attack.
+          Confirms within 60s (may be delayed by spam but eventually lands).
+        must_pass: true
+
+  - id: extreme_height_references
+    description: |
+      Submit transactions referencing extreme block heights.
+      Each must be rejected gracefully — no panic, no crash.
+    timeout_sec: 60
+    actions:
+      - bot: height_attacker
+        behavior: submit_tx_with_height_ref
+        params:
+          - height: 0
+            description: "Block 0 (genesis) — may be valid or rejected as too old"
+            expected: rejected_or_ok   # either is fine, must not crash
+          - height: 9999999999
+            description: "Far future height (10 billion blocks)"
+            expected_rejection: INVALID_HEIGHT
+          - height: 18446744073709551614   # u64::MAX - 1
+            description: "u64::MAX - 1"
+            expected_rejection: INVALID_HEIGHT
+          - height: 18446744073709551615   # u64::MAX
+            description: "u64::MAX"
+            expected_rejection: INVALID_HEIGHT
+    assertions:
+      - id: extreme_heights_rejected
+        check: "Heights 9999999999, u64::MAX-1, u64::MAX all rejected with INVALID_HEIGHT (not panic)"
+        must_pass: true
+      - id: no_panic_on_extreme_height
+        check: "All 5 validators still running after extreme height submissions"
+        must_pass: true
+        severity: critical
+      - id: no_overflow_in_response
+        check: |
+          Response body does not contain:
+          - 'overflow', 'underflow', 'panic', 'unwrap failed', 'thread panicked'
+          (These indicate unhandled arithmetic errors)
+        must_pass: true
+
+  - id: proof_pool_flooding
+    description: |
+      3 bots flood the proof pool with invalid proofs (200/min each, 600/min total)
+      for 5 minutes (3000 total invalid proofs).
+      Proof verifier must reject all, pool must stay bounded, no OOM.
+    duration_sec: 300
+    concurrent_bots: 4   # 3 flooders + 1 monitor
+    actions:
+      - bot: proof_flooder_1
+        behavior: flood_proof_pool
+        params:
+          proofs_per_minute: 200
+          proof_type: random_bytes   # completely random, guaranteed invalid
+          duration_sec: 300
+      - bot: proof_flooder_2
+        behavior: flood_proof_pool
+        params:
+          proofs_per_minute: 200
+          proof_type: malformed_valid_length   # correct byte length, wrong content
+          duration_sec: 300
+      - bot: proof_flooder_3
+        behavior: flood_proof_pool
+        params:
+          proofs_per_minute: 200
+          proof_type: truncated   # valid proofs truncated at various lengths
+          duration_sec: 300
+      - bot: monitor
+        behavior: measure_resources
+        params:
+          interval_sec: 30
+          metrics: [memory_percent, cpu_percent]
+          nodes: all_validators
+          duration_sec: 300
+    assertions:
+      - id: all_invalid_proofs_rejected
+        check: "All submitted invalid proofs return INVALID_PROOF (not 200 OK)"
+        must_pass: true
+      - id: proof_pool_bounded
+        check: |
+          Proof pool does not grow beyond bounded_max.
+          (Proof pool must have eviction or rejection-before-queuing)
+        must_pass: true
+      - id: memory_bounded
+        check: "monitor: memory_percent < 90% on all nodes during flood"
+        must_pass: true
+      - id: cpu_bounded
+        check: "monitor: cpu_percent < 95% on all nodes during flood"
+        must_pass: true
+      - id: valid_proof_still_accepted
+        check: |
+          After flood: submit valid shielded transfer proof.
+          Accepted within 30s (proof pool not permanently broken by flood).
+        must_pass: true
+
+  - id: recovery_verification
+    description: "Verify full network recovery after all attack phases"
+    timeout_sec: 120
+    actions:
+      - bot: monitor
+        behavior: verify_recovery
+        params:
+          checks:
+            - service_active: all_validators
+            - block_advancing: true
+            - rpc_latency_below_ms: 1000   # back to normal latency
+            - mempool_draining: true       # spam txs leaving pool
+    assertions:
+      - id: full_recovery
+        check: "All nodes healthy, block advancing, latency normal within 120s of attack end"
+        must_pass: true
+
+metrics:
+  total_spam_txs_submitted:         { type: counter }
+  total_spam_txs_rejected:          { type: counter }
+  total_spam_txs_confirmed:         { type: counter }  # expected: some, limited by eviction
+  mempool_peak_size:                 { type: gauge    }
+  mempool_evictions:                 { type: counter  }
+  extreme_height_panics:             { type: counter, expected_value: 0 }
+  invalid_proofs_submitted:         { type: counter }
+  invalid_proofs_rejected:          { type: counter }
+  max_memory_percent:               { type: gauge    }
+  max_cpu_percent:                  { type: gauge    }
+  monitor_latency_p95_ms:           { type: gauge    }
+  node_crashes:                     { type: counter, expected_value: 0 }
+
+success_criteria_detail:
+  - name: mempool_bounded
+    check: "mempool_peak_size <= configured_max"
+  - name: no_node_crash
+    check: "node_crashes == 0"
+  - name: rpc_responsive
+    check: "monitor_latency_p95_ms < 5000 during attack"
+  - name: extreme_heights_rejected_gracefully
+    check: "extreme_height_panics == 0 AND invalid rejections returned for all extreme heights"
+  - name: proof_pool_resilient
+    check: "invalid_proofs_rejected == invalid_proofs_submitted AND valid proof accepted after flood"
