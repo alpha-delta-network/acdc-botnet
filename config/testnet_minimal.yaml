@@ -1,0 +1,80 @@
+# acdc-botnet testnet_minimal.yaml
+# Minimal population for testnet certification (TN-01 .. TN-12).
+# All API calls route through adnet unified gateway.
+#
+# Population:
+#   6 validators (3 Alpha governance GIDs, 3 DX stakers)
+#   4 traders (2 Alpha, 2 Delta)
+#   2 market makers (Delta DEX)
+#   1 sequencer observer
+
+network:
+  alpha_api_url: "${ALPHA_API_URL:-https://testnet.ac-dc.network:3030}"
+  delta_api_url: "${DELTA_API_URL:-https://testnet.ac-dc.network:4030}"
+  # adnet_unified is the primary endpoint; alpha/delta_api_url select chain
+  api_key: "${ADNET_API_KEY:-}"
+  timeout_s: 30
+
+# Wallets are generated deterministically from a seed mnemonic.
+# In CI: use BOTNET_SEED_MNEMONIC env var.
+# Do NOT commit real mnemonics here.
+wallet:
+  seed_mnemonic: "${BOTNET_SEED_MNEMONIC:-abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about}"
+  derivation_path_prefix: "m/44'/1134'/0'"
+  account_count: 20
+
+population:
+  # --- Alpha governance GID governors ---
+  governors:
+    count: 3
+    role: governor
+    chain: alpha
+    fund_amount_ax: 1000  # 1000 AX each for gas
+    # Governors need GID registration (TODO: requires governance bootstrap tx)
+
+  # --- Delta DX stakers ---
+  stakers:
+    count: 3
+    role: staker
+    chain: delta
+    fund_amount_dx: 15000  # 15000 DX each (min 10000 to qualify)
+
+  # --- Traders ---
+  traders:
+    count: 4
+    role: trader
+    chain: both
+    fund_amount_ax: 500
+    fund_amount_dx: 5000
+
+  # --- Market makers ---
+  market_makers:
+    count: 2
+    role: market_maker
+    chain: delta
+    fund_amount_dx: 50000  # 50k DX for LP provisioning
+
+  # --- Observer ---
+  observers:
+    count: 1
+    role: observer
+    chain: both
+    fund_amount_ax: 100
+    fund_amount_dx: 100
+
+scenarios:
+  # Run these scenarios in order during TN certification
+  cert_sequence:
+    - id: basic_liveness
+      description: "Verify bots can reach adnet API and read chain state"
+      timeout_s: 60
+    - id: mempool_stress_light
+      description: "Submit 10 transactions, verify mempool ingests them"
+      timeout_s: 120
+    - id: validator_slash_report
+      description: "Governor submits late_submission slash evidence"
+      timeout_s: 60
+    - id: governance_vote_cycle
+      description: "Governor bots vote on a test proposal (requires proposal #1)"
+      timeout_s: 180
+      requires_proposal: true

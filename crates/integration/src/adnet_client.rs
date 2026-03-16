@@ -1,159 +1,241 @@
-/// Adnet CLI client
+/// AdnetClient — unified adnet API client for acdc-botnet.
 ///
-/// Wrapper for executing adnet CLI commands
+/// Routes all requests through adnet (Alpha: port 3030, Delta: port 4030).
+/// This replaces the direct AlphaOS/DeltaOS REST clients.
 use anyhow::{Context, Result};
+use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
-use std::process::{Command, Output};
+use std::time::Duration;
 
-/// Adnet CLI client
+/// Unified adnet REST API client
 pub struct AdnetClient {
-    binary_path: String,
+    base_url: String,
+    client: Client,
+    api_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct StateRoot {
+    pub state_root: Option<String>,
+    pub root: Option<String>,
+    pub hash: Option<String>,
+    pub height: Option<u64>,
+    pub block_height: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ValidatorListResponse {
+    pub validators: Option<Vec<serde_json::Value>>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct MempoolResponse {
+    pub size: Option<u64>,
+    pub pending_count: Option<u64>,
+    pub total: Option<u64>,
+    pub transactions: Option<Vec<serde_json::Value>>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct VersionResponse {
+    pub version: Option<String>,
+    pub adnet_version: Option<String>,
+    pub chain: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct GovernanceProposalsResponse {
+    pub proposals: Option<Vec<serde_json::Value>>,
+    pub total: Option<u64>,
 }
 
 impl AdnetClient {
-    /// Create a new Adnet CLI client
-    pub fn new(binary_path: String) -> Self {
-        Self { binary_path }
+    /// Create a new adnet client.
+    ///
+    /// `base_url` should be the adnet API URL, e.g. `https://testnet.ac-dc.network:3030`
+    pub fn new(base_url: String) -> Result<Self> {
+        Self::with_api_key(base_url, None)
     }
 
-    /// Create account
-    pub fn create_account(&self, name: &str) -> Result<AccountInfo> {
-        let output = self.execute(&["account", "new", "--name", name])?;
-        self.parse_json_output(&output)
+    pub fn with_api_key(base_url: String, api_key: Option<String>) -> Result<Self> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .context("Failed to build HTTP client")?;
+        Ok(Self {
+            base_url,
+            client,
+            api_key,
+        })
     }
 
-    /// Get account info
-    pub fn get_account(&self, address: &str) -> Result<AccountInfo> {
-        let output = self.execute(&["account", "get", address])?;
-        self.parse_json_output(&output)
+    fn auth_header(&self) -> Vec<(String, String)> {
+        if let Some(key) = &self.api_key {
+            vec![("X-Api-Key".to_string(), key.clone())]
+        } else {
+            vec![]
+        }
     }
 
-    /// Transfer tokens
-    pub fn transfer(&self, from: &str, to: &str, amount: u64, token: &str) -> Result<String> {
-        let amount_str = amount.to_string();
-        let output = self.execute(&[
-            "account",
-            "transfer",
-            "--from",
-            from,
-            "--to",
-            to,
-            "--amount",
-            &amount_str,
-            "--token",
-            token,
-        ])?;
-
-        self.extract_transaction_id(&output)
+    async fn get_json<T: for<'de> serde::Deserialize<'de>>(&self, path: &str) -> Result<T> {
+        let url = format!("{}{}", self.base_url, path);
+        let mut req = self.client.get(&url);
+        for (k, v) in self.auth_header() {
+            req = req.header(k, v);
+        }
+        let response = req.send().await.context(format!("GET {}", path))?;
+        if !response.status().is_success() {
+            anyhow::bail!("GET {} returned {}", path, response.status());
+        }
+        response
+            .json::<T>()
+            .await
+            .context(format!("parse response from {}", path))
     }
 
-    /// Submit DEX order
-    pub fn trade_order(
+    async fn post_json<T: for<'de> serde::Deserialize<'de>, B: Serialize>(
         &self,
-        account: &str,
-        pair: &str,
-        side: &str,
-        amount: &str,
-        price: Option<&str>,
-    ) -> Result<String> {
-        let mut args = vec![
-            "trade",
-            "order",
-            "--account",
-            account,
-            "--pair",
-            pair,
-            "--side",
-            side,
-            "--amount",
-            amount,
-        ];
-
-        if let Some(p) = price {
-            args.extend_from_slice(&["--price", p]);
+        path: &str,
+        body: &B,
+    ) -> Result<T> {
+        let url = format!("{}{}", self.base_url, path);
+        let mut req = self.client.post(&url).json(body);
+        for (k, v) in self.auth_header() {
+            req = req.header(k, v);
         }
-
-        let output = self.execute(&args)?;
-        self.extract_order_id(&output)
-    }
-
-    /// Cancel DEX order
-    pub fn trade_cancel(&self, order_id: &str) -> Result<()> {
-        self.execute(&["trade", "cancel", "--order", order_id])?;
-        Ok(())
-    }
-
-    /// Get validator info
-    pub fn get_validator(&self, address: &str) -> Result<ValidatorInfo> {
-        let output = self.execute(&["validator", "info", address])?;
-        self.parse_json_output(&output)
-    }
-
-    /// Claim rewards
-    pub fn claim_rewards(&self, validator: &str) -> Result<String> {
-        let output = self.execute(&["rewards", "claim", "--validator", validator])?;
-        self.extract_transaction_id(&output)
-    }
-
-    /// Execute a command
-    fn execute(&self, args: &[&str]) -> Result<Output> {
-        let output = Command::new(&self.binary_path)
-            .args(args)
-            .output()
-            .context("Failed to execute adnet command")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("Command failed: {}", stderr);
+        let response = req.send().await.context(format!("POST {}", path))?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "POST {} returned {}: {}",
+                path,
+                status,
+                &body[..body.len().min(200)]
+            );
         }
-
-        Ok(output)
+        response
+            .json::<T>()
+            .await
+            .context(format!("parse response from {}", path))
     }
 
-    /// Parse JSON output
-    fn parse_json_output<T: for<'de> Deserialize<'de>>(&self, output: &Output) -> Result<T> {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        serde_json::from_str(&stdout).context("Failed to parse JSON output")
+    // ── Chain state ────────────────────────────────────────────────────────
+
+    /// Get the current state root (maps to GET /api/v1/state/root)
+    pub async fn get_state_root(&self) -> Result<StateRoot> {
+        self.get_json("/api/v1/state/root").await
     }
 
-    /// Extract transaction ID from output
-    fn extract_transaction_id(&self, output: &Output) -> Result<String> {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        // Simple extraction - assumes format "Transaction ID: <id>"
-        stdout
-            .lines()
-            .find(|line| line.contains("Transaction ID:"))
-            .and_then(|line| line.split(':').nth(1))
-            .map(|id| id.trim().to_string())
-            .context("Failed to extract transaction ID")
+    /// Get current block height
+    pub async fn get_latest_block_height(&self) -> Result<u64> {
+        let root = self.get_state_root().await?;
+        Ok(root.height.or(root.block_height).unwrap_or(0))
     }
 
-    /// Extract order ID from output
-    fn extract_order_id(&self, output: &Output) -> Result<String> {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        // Simple extraction - assumes format "Order ID: <id>"
-        stdout
-            .lines()
-            .find(|line| line.contains("Order ID:"))
-            .and_then(|line| line.split(':').nth(1))
-            .map(|id| id.trim().to_string())
-            .context("Failed to extract order ID")
+    // ── Validators ─────────────────────────────────────────────────────────
+
+    /// List all validators (GET /validators)
+    pub async fn get_validators(&self) -> Result<Vec<serde_json::Value>> {
+        let raw: serde_json::Value = self.get_json("/validators").await?;
+        if let Some(arr) = raw.as_array() {
+            return Ok(arr.clone());
+        }
+        if let Some(obj) = raw.as_object() {
+            if let Some(arr) = obj.get("validators").and_then(|v| v.as_array()) {
+                return Ok(arr.clone());
+            }
+        }
+        Ok(vec![])
     }
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AccountInfo {
-    pub address: String,
-    pub balance_ax: u64,
-    pub balance_sax: u64,
-    pub balance_dx: u64,
-}
+    // ── Mempool ────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ValidatorInfo {
-    pub address: String,
-    pub stake: u64,
-    pub is_active: bool,
+    /// Get mempool info (GET /api/v1/mempool)
+    pub async fn get_mempool(&self) -> Result<MempoolResponse> {
+        self.get_json("/api/v1/mempool").await
+    }
+
+    // ── Transactions ───────────────────────────────────────────────────────
+
+    /// Submit a private transaction (POST /api/v1/transactions/submit/private)
+    pub async fn submit_private_transaction(
+        &self,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.post_json("/api/v1/transactions/submit/private", body)
+            .await
+    }
+
+    /// Submit a public DEX transaction (POST /api/v1/transactions/submit/public)
+    pub async fn submit_public_transaction(
+        &self,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.post_json("/api/v1/transactions/submit/public", body)
+            .await
+    }
+
+    // ── Prover pool ────────────────────────────────────────────────────────
+
+    /// Get prover pool status (GET /api/v1/pool/status)
+    pub async fn get_pool_status(&self) -> Result<serde_json::Value> {
+        self.get_json("/api/v1/pool/status").await
+    }
+
+    /// Register a prover (POST /api/v1/prover/register)
+    pub async fn register_prover(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
+        self.post_json("/api/v1/prover/register", body).await
+    }
+
+    // ── Governance ─────────────────────────────────────────────────────────
+
+    /// List governance proposals (GET /api/v1/governance/proposals)
+    pub async fn get_governance_proposals(&self) -> Result<GovernanceProposalsResponse> {
+        self.get_json("/api/v1/governance/proposals").await
+    }
+
+    /// Get a specific governance proposal (GET /api/v1/governance/proposals/:id)
+    pub async fn get_governance_proposal(&self, id: u64) -> Result<serde_json::Value> {
+        self.get_json(&format!("/api/v1/governance/proposals/{}", id))
+            .await
+    }
+
+    /// Submit a governance vote (POST /api/v1/governance/proposals/:id/vote)
+    pub async fn submit_governance_vote(
+        &self,
+        proposal_id: u64,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.post_json(
+            &format!("/api/v1/governance/proposals/{}/vote", proposal_id),
+            body,
+        )
+        .await
+    }
+
+    // ── Slash evidence ─────────────────────────────────────────────────────
+
+    /// Submit slash evidence (POST /api/v1/validator/slash-evidence)
+    pub async fn submit_slash_evidence(
+        &self,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.post_json("/api/v1/validator/slash-evidence", body)
+            .await
+    }
+
+    // ── Version / health ───────────────────────────────────────────────────
+
+    /// Get version info (GET /api/v1/version)
+    pub async fn get_version(&self) -> Result<VersionResponse> {
+        self.get_json("/api/v1/version").await
+    }
+
+    /// Check if adnet is reachable
+    pub async fn is_alive(&self) -> bool {
+        self.get_version().await.is_ok()
+    }
 }
 
 #[cfg(test)]
@@ -161,8 +243,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_client_creation() {
-        let client = AdnetClient::new("/usr/local/bin/adnet".to_string());
-        assert_eq!(client.binary_path, "/usr/local/bin/adnet");
+    fn test_client_constructs() {
+        let c = AdnetClient::new("http://localhost:3030".to_string());
+        assert!(c.is_ok());
+    }
+
+    #[test]
+    fn test_client_with_api_key() {
+        let c = AdnetClient::with_api_key(
+            "http://localhost:3030".to_string(),
+            Some("test-key".to_string()),
+        );
+        assert!(c.is_ok());
     }
 }
