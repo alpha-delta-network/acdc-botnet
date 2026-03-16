@@ -1,7 +1,7 @@
-pub mod adnet_client;
 /// Integration with external systems
 ///
-/// Provides clients for AlphaOS, DeltaOS, and Adnet
+/// Provides clients for AlphaOS, DeltaOS, and Adnet unified API
+pub mod adnet_client;
 pub mod alphaos_client;
 pub mod deltaos_client;
 
