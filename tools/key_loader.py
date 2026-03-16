@@ -149,8 +149,9 @@ class KeySet:
 # ─── Loader ───────────────────────────────────────────────────────────────────
 
 def _parse_entry(raw: Dict[str, Any]) -> KeyEntry:
+    # Keys file may use "account" (testnet keygen) or "alpha_addr" (botnet format)
     return KeyEntry(
-        alpha_addr=raw.get("alpha_addr", ""),
+        alpha_addr=raw.get("alpha_addr", raw.get("account", "")),
         private_key=raw.get("private_key", ""),
         view_key=raw.get("view_key"),
         ax_balance=int(raw.get("ax_balance", 0)),
@@ -175,7 +176,10 @@ def load(path: str) -> KeySet:
         generated_at=str(raw.get("generated_at", "")),
     )
 
-    for entry in raw.get("governor_keys", []):
+    # governor_keys may be dict {threshold, total, keys:[...]} or bare list
+    _gov_raw = raw.get("governor_keys", [])
+    _gov_list = _gov_raw.get("keys", []) if isinstance(_gov_raw, dict) else _gov_raw
+    for entry in _gov_list:
         ks.governor_keys.append(_parse_entry(entry))
 
     for entry in raw.get("validator_keys", []):
