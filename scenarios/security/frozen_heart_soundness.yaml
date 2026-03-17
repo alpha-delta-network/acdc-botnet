@@ -1,0 +1,212 @@
+metadata:
+  id: frozen_heart_soundness
+  version: "1.0.0"
+  created: "2026-03-15"
+  category: security
+  severity: critical
+  description: |
+    Adversarial ZK soundness test targeting Frozen Heart / Fiat-Shamir weakness.
+    The Frozen Heart attack exploits predictable verifier challenge randomness in
+    Sigma-protocol-based proofs. If the Fiat-Shamir transcript does not bind all
+    public inputs, a forged proof for input set A may verify under input set B.
+
+    Grounded in:
+      - ABDK Varuna audit: Frozen Heart precondition
+      - Eurocrypt 2021 "Fiat-Shamir in the Wild" §3
+      - ARES Deep Baseline 2026-02-26: ownership bypass + mapping binding HIGH findings
+
+  success_criteria:
+    - all_forged_proofs_rejected: true
+    - no_false_positive_on_valid_proofs: true
+    - node_remains_stable: true
+
+  network:
+    type: testnet
+    nodes_required: 1       # single validator is sufficient for proof rejection tests
+    keys_file: /tmp/testnet-keys-{deploy_id}.yaml
+    network_id: 13
+
+setup:
+  wallets:
+    - id: honest_user
+      role: baseline_prover
+      source: keys.funded_wallets[0]
+
+    - id: proof_forger
+      role: attacker
+      source: keys.funded_wallets[1]
+
+    - id: transcript_substitutor
+      role: attacker
+      source: keys.funded_wallets[2]
+
+phases:
+
+  - id: baseline_valid_proof
+    description: "Establish that valid proofs are accepted (no false positive)"
+    timeout_sec: 60
+    actions:
+      - bot: honest_user
+        behavior: submit_shielded_transfer
+        params:
+          from: honest_user.alpha_addr
+          to: keys.funded_wallets[3].alpha_addr
+          amount: 1000
+          generate_proof: true
+    assertions:
+      - id: baseline_accepted
+        check: "proof submission returns 200 OK and tx confirmed within 30s"
+        must_pass: true
+        description: "Control: valid proofs are accepted"
+
+  - id: frozen_rng_proof_attack
+    description: |
+      Submit Varuna proof crafted with frozen (constant) verifier challenge.
+      This simulates an attacker who controls/predicts the verifier's random oracle.
+      A correctly implemented Fiat-Shamir must derive the challenge from the
+      transcript (committed state + public inputs), not from an injectable source.
+    timeout_sec: 90
+    concurrent_bots: 3
+    actions:
+      - bot: proof_forger
+        behavior: submit_forged_proof
+        params:
+          attack_type: frozen_rng
+          description: "Craft proof where verifier challenge = 0x0000...0000 (frozen)"
+          target_program: shielded_transfer
+          forged_inputs:
+            from: proof_forger.alpha_addr
+            amount: 999999
+          expected_rejection: INVALID_PROOF
+      - bot: proof_forger
+        behavior: submit_forged_proof
+        params:
+          attack_type: frozen_rng
+          description: "Craft proof where verifier challenge = 0xFFFF...FFFF"
+          forged_inputs:
+            from: proof_forger.alpha_addr
+            amount: 500000
+          expected_rejection: INVALID_PROOF
+      - bot: proof_forger
+        behavior: submit_forged_proof
+        params:
+          attack_type: frozen_rng
+          description: "Craft proof where verifier challenge = predictable PRNG output"
+          forged_inputs:
+            from: proof_forger.alpha_addr
+            amount: 100
+          expected_rejection: INVALID_PROOF
+    assertions:
+      - id: all_frozen_rng_rejected
+        check: "ALL 3 forged proofs rejected with INVALID_PROOF"
+        must_pass: true
+      - id: no_unauthorized_transfer
+        check: "proof_forger balance unchanged (no credits transferred)"
+        must_pass: true
+
+  - id: transcript_substitution_attack
+    description: |
+      Generate a valid proof for public input set A, then re-submit with public
+      inputs from set B. A sound Fiat-Shamir must reject this — the challenge
+      must bind to the committed inputs, not be reusable across contexts.
+    timeout_sec: 90
+    actions:
+      - bot: transcript_substitutor
+        behavior: transcript_substitution_attack
+        params:
+          step1:
+            description: "Generate valid proof for (from=substitutor, amount=1)"
+            from: transcript_substitutor.alpha_addr
+            amount: 1
+            generate_only: true   # do NOT submit yet
+          step2:
+            description: "Re-submit proof but change public inputs to (amount=999999)"
+            substitute_inputs:
+              amount: 999999
+            expected_rejection: INVALID_PROOF
+      - bot: transcript_substitutor
+        behavior: transcript_substitution_attack
+        params:
+          step1:
+            description: "Generate valid shielded proof for address A"
+            from: transcript_substitutor.alpha_addr
+          step2:
+            description: "Re-submit with recipient changed to attacker-controlled address"
+            substitute_inputs:
+              to: keys.funded_wallets[4].alpha_addr  # different from original
+            expected_rejection: INVALID_PROOF
+    assertions:
+      - id: substituted_transcripts_rejected
+        check: "ALL substituted transcript submissions rejected with INVALID_PROOF"
+        must_pass: true
+      - id: original_proof_still_valid
+        check: |
+          After attack attempts, re-submit the original valid proof (unmodified):
+          ACCEPTED — protocol not disrupted by attack attempts
+        must_pass: true
+
+  - id: ownership_bypass_attempt
+    description: |
+      Submit shielded transaction WITHOUT a valid ownership proof.
+      Phase 1 implementation must not contain a bypass/placeholder.
+      (ARES HIGH finding: ownership bypass not test-scoped)
+    timeout_sec: 60
+    actions:
+      - bot: proof_forger
+        behavior: submit_shielded_without_proof
+        params:
+          description: "Omit ownership proof entirely"
+          expected_rejection: PROOF_MISSING
+      - bot: proof_forger
+        behavior: submit_shielded_with_empty_proof
+        params:
+          description: "Submit empty proof bytes []"
+          expected_rejection: INVALID_PROOF
+      - bot: proof_forger
+        behavior: submit_shielded_with_zero_proof
+        params:
+          description: "Submit all-zero proof bytes"
+          expected_rejection: INVALID_PROOF
+    assertions:
+      - id: no_bypass_present
+        check: "ALL 3 bypass attempts rejected — no placeholder allows missing proof"
+        must_pass: true
+        severity: critical
+
+  - id: mapping_commitment_binding
+    description: |
+      Verify mapping commitment is bound to proof public inputs.
+      (ARES HIGH finding: mapping not included in Varuna public inputs)
+    timeout_sec: 60
+    actions:
+      - bot: transcript_substitutor
+        behavior: mapping_commitment_substitution
+        params:
+          step1:
+            description: "Generate proof with valid mapping commitment C1"
+          step2:
+            description: "Re-submit proof with different mapping commitment C2"
+            substitute_commitment: different_valid_commitment
+            expected_rejection: INVALID_PROOF
+    assertions:
+      - id: mapping_commitment_bound
+        check: "Proof with substituted mapping commitment rejected"
+        must_pass: true
+        severity: critical
+
+metrics:
+  total_forged_proofs_submitted:  { type: counter }
+  total_forged_proofs_rejected:   { type: counter }
+  false_positives:                { type: counter, expected_value: 0 }
+  bypass_attempts_blocked:        { type: counter }
+  node_crashes:                   { type: counter, expected_value: 0 }
+
+success_criteria_detail:
+  - name: all_forged_proofs_rejected
+    check: "total_forged_proofs_rejected == total_forged_proofs_submitted"
+  - name: no_false_positive
+    check: "false_positives == 0"
+  - name: no_bypass
+    check: "bypass_attempts_blocked == bypass_attempts_attempted"
+  - name: node_stable
+    check: "node_crashes == 0 AND rpc_responding after all phases"
