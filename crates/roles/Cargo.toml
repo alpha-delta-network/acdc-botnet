@@ -27,5 +27,9 @@ tracing = { workspace = true }
 # Utilities
 rand = { workspace = true }
 
+# Cryptography (for GovernorBot ed25519 signing)
+ed25519-dalek = { workspace = true }
+hex = "0.4"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
