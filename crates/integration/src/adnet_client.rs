@@ -181,9 +181,8 @@ impl AdnetClient {
 
     /// Submit a governance proposal (POST /api/v1/governance/proposals)
     pub async fn submit_governance_proposal(&self, body: &serde_json::Value) -> Result<u64> {
-        let response: serde_json::Value = self
-            .post_json("/api/v1/governance/proposals", body)
-            .await?;
+        let response: serde_json::Value =
+            self.post_json("/api/v1/governance/proposals", body).await?;
         if let Some(id) = response.get("id").and_then(|v| v.as_u64()) {
             Ok(id)
         } else {
