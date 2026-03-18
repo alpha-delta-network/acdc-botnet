@@ -259,7 +259,11 @@ impl GovernorBot {
     /// Mark the GID as crippled (called when grim trigger fires)
     pub fn mark_crippled(&mut self) {
         self.gid_status = GidStatus::Crippled;
-        tracing::warn!("GovernorBot {}: GID {} marked CRIPPLED by grim trigger", self.id, self.gid_address);
+        tracing::warn!(
+            "GovernorBot {}: GID {} marked CRIPPLED by grim trigger",
+            self.id,
+            self.gid_address
+        );
     }
 
     /// Mark the GID as active (called after successful apology proposal)
@@ -546,7 +550,10 @@ mod tests {
         assert_eq!(*bot.gid_status(), GidStatus::Crippled);
         assert!(!bot.can_vote());
         let signed = bot.sign_vote(999, VoteChoice::Yes);
-        assert!(signed.is_none(), "Crippled GID must not produce a signed vote");
+        assert!(
+            signed.is_none(),
+            "Crippled GID must not produce a signed vote"
+        );
     }
 
     #[test]
