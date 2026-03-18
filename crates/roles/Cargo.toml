@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 # Internal dependencies
 adnet-testbot = { path = "../bot" }
+adnet-testbot-integration = { path = "../integration" }
 
 # Async runtime
 tokio = { workspace = true }
