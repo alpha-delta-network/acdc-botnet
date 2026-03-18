@@ -117,6 +117,18 @@ impl AdnetClient {
             .context(format!("parse response from {}", path))
     }
 
+    /// POST to any path with a JSON body, returning raw JSON value.
+    ///
+    /// Used for one-off endpoints (e.g. /proposals/:id/execute) without needing
+    /// a typed response struct.
+    pub async fn post_json_raw<B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<serde_json::Value> {
+        self.post_json(path, body).await
+    }
+
     // ── Chain state ────────────────────────────────────────────────────────
 
     /// Get latest state root (GET /state)

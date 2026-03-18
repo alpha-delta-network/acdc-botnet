@@ -20,7 +20,8 @@
 /// - Each signatory calls `add_signature()` independently
 /// - When `signatures.len() >= threshold`, the submitter calls `submit()`
 /// - This avoids synchronous coordination overhead
-use adnet_testbot::{BehaviorResult, Bot, BotContext, Result};
+use adnet_testbot::{BehaviorResult, Bot, BotContext, BotError, Result};
+use adnet_testbot_integration::AdnetClient;
 use async_trait::async_trait;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand::rngs::OsRng;
@@ -441,31 +442,124 @@ impl Bot for GovernorBot {
             self.gid_address
         );
 
+        let context = self.context.clone().ok_or_else(|| {
+            BotError::BehaviorError("GovernorBot not set up — call setup() first".to_string())
+        })?;
+
         match behavior_id {
             "check_grim_trigger" => {
-                // Check if this GID is crippled — trigger apology if so
-                let is_crippled = self.gid_status == GidStatus::Crippled;
-                if is_crippled {
-                    let payload = self.build_apology_proposal();
-                    Ok(BehaviorResult::success(format!(
-                        "GID {} is CRIPPLED. Apology proposal payload: {}",
-                        self.gid_address,
-                        payload
-                            .map(|p| p.to_string())
-                            .unwrap_or_else(|| "none".to_string())
-                    )))
-                } else {
-                    Ok(BehaviorResult::success(format!(
-                        "GID {} status: {:?}",
-                        self.gid_address, self.gid_status
-                    )))
+                // Query adnet for live grim trigger status, update local state
+                let adnet_url = context.execution.network.adnet_unified.clone();
+                match AdnetClient::new(adnet_url) {
+                    Ok(client) => {
+                        match client.get_grim_trigger_status(&self.gid_address).await {
+                            Ok(status) => {
+                                let is_crippled = status
+                                    .get("is_crippled")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                if is_crippled {
+                                    self.mark_crippled();
+                                    let payload = self.build_apology_proposal();
+                                    Ok(BehaviorResult::success(format!(
+                                        "GID {} is CRIPPLED (confirmed via adnet). Apology payload ready: {}",
+                                        self.gid_address,
+                                        payload
+                                            .map(|p| p.to_string())
+                                            .unwrap_or_else(|| "none".to_string())
+                                    )))
+                                } else {
+                                    if self.gid_status == GidStatus::Crippled {
+                                        self.mark_restored();
+                                    }
+                                    Ok(BehaviorResult::success(format!(
+                                        "GID {} is active (confirmed via adnet). Status: {:?}",
+                                        self.gid_address, self.gid_status
+                                    )))
+                                }
+                            }
+                            Err(e) => {
+                                // Fallback to local state if adnet unreachable
+                                tracing::warn!(
+                                    "GovernorBot {}: adnet grim trigger query failed: {}",
+                                    self.id,
+                                    e
+                                );
+                                Ok(BehaviorResult::success(format!(
+                                    "GID {} local status: {:?} (adnet unreachable)",
+                                    self.gid_address, self.gid_status
+                                )))
+                            }
+                        }
+                    }
+                    Err(e) => Ok(BehaviorResult::success(format!(
+                        "GID {} local status: {:?} (client build failed: {})",
+                        self.gid_address, self.gid_status, e
+                    ))),
                 }
             }
             "vote_yes_on_active_proposals" => {
-                // Stub: in production, query proposals via adnet client and vote
+                if !self.can_vote() {
+                    return Ok(BehaviorResult::success(format!(
+                        "GID {} is crippled — cannot vote",
+                        self.gid_address
+                    )));
+                }
+                let adnet_url = context.execution.network.adnet_unified.clone();
+                let client = AdnetClient::new(adnet_url)
+                    .map_err(|e| BotError::NetworkError(e.to_string()))?;
+
+                let proposals_resp = client
+                    .get_governance_proposals()
+                    .await
+                    .map_err(|e| BotError::NetworkError(e.to_string()))?;
+                let proposals = proposals_resp.proposals.unwrap_or_default();
+
+                let mut votes_cast = 0usize;
+                for proposal in &proposals {
+                    let id = match proposal.get("id").and_then(|v| v.as_u64()) {
+                        Some(id) => id,
+                        None => continue,
+                    };
+                    let status = proposal
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if status != "active" && status != "voting" {
+                        continue;
+                    }
+
+                    if let Some(signed) = self.sign_vote(id, VoteChoice::Yes) {
+                        let body = serde_json::json!({
+                            "voter": signed.voter_public_key,
+                            "vote": signed.vote,
+                            "signature": signed.signature,
+                        });
+                        match client.submit_governance_vote(id, &body).await {
+                            Ok(_) => {
+                                votes_cast += 1;
+                                tracing::info!(
+                                    "GovernorBot {} voted YES on proposal {} for GID {}",
+                                    self.id,
+                                    id,
+                                    self.gid_address
+                                );
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "GovernorBot {} vote failed on proposal {}: {}",
+                                    self.id,
+                                    id,
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+
                 Ok(BehaviorResult::success(format!(
-                    "GovernorBot {} would vote YES on active proposals for GID {}",
-                    self.id, self.gid_address
+                    "GovernorBot {} voted YES on {} active proposals for GID {}",
+                    self.id, votes_cast, self.gid_address
                 )))
             }
             "submit_apology_proposal" => {
@@ -475,14 +569,42 @@ impl Bot for GovernorBot {
                         self.gid_address
                     )));
                 }
-                let payload = self.build_apology_proposal();
-                Ok(BehaviorResult::success(format!(
-                    "Apology proposal constructed for GID {}: {}",
-                    self.gid_address,
-                    payload
-                        .map(|p| p.to_string())
-                        .unwrap_or_else(|| "error".to_string())
-                )))
+                let payload = self.build_apology_proposal().ok_or_else(|| {
+                    BotError::BehaviorError("Failed to build apology".to_string())
+                })?;
+
+                let adnet_url = context.execution.network.adnet_unified.clone();
+                let client = AdnetClient::new(adnet_url)
+                    .map_err(|e| BotError::NetworkError(e.to_string()))?;
+
+                match client.submit_governance_proposal(&payload).await {
+                    Ok(proposal_id) => {
+                        self.gid_status = GidStatus::PendingRecovery {
+                            apology_proposal_id: proposal_id,
+                        };
+                        tracing::info!(
+                            "GovernorBot {}: apology proposal {} submitted for GID {}",
+                            self.id,
+                            proposal_id,
+                            self.gid_address
+                        );
+                        Ok(BehaviorResult::success(format!(
+                            "Apology proposal {} submitted for GID {}",
+                            proposal_id, self.gid_address
+                        )))
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "GovernorBot {}: apology proposal submission failed: {}",
+                            self.id,
+                            e
+                        );
+                        Ok(BehaviorResult::success(format!(
+                            "Apology proposal submission failed for GID {}: {}",
+                            self.gid_address, e
+                        )))
+                    }
+                }
             }
             _ => Ok(BehaviorResult::success(format!(
                 "Unknown behavior {} — no-op",
