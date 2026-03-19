@@ -23,7 +23,6 @@ pub struct BasicProposalVoting {
 pub enum VoteOption {
     Yes,
     No,
-    Abstain,
 }
 
 impl VoteOption {
@@ -31,7 +30,6 @@ impl VoteOption {
         match self {
             VoteOption::Yes => "yes",
             VoteOption::No => "no",
-            VoteOption::Abstain => "abstain",
         }
     }
 }
@@ -511,7 +509,6 @@ mod tests {
     fn test_vote_option_as_str() {
         assert_eq!(VoteOption::Yes.as_str(), "yes");
         assert_eq!(VoteOption::No.as_str(), "no");
-        assert_eq!(VoteOption::Abstain.as_str(), "abstain");
     }
 
     #[test]

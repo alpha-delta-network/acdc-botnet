@@ -98,16 +98,15 @@ impl ProposalType {
 pub enum VoteChoice {
     Yes,
     No,
-    Abstain,
 }
 
 impl VoteChoice {
     /// Byte encoding used in ed25519 vote signature: proposal_id_le8 || vote_byte
+    /// Yes -> b'Y' (0x59), No -> b'N' (0x4E)
     pub fn to_byte(&self) -> u8 {
         match self {
-            VoteChoice::Yes => 0x01,
-            VoteChoice::No => 0x02,
-            VoteChoice::Abstain => 0x03,
+            VoteChoice::Yes => b'Y',
+            VoteChoice::No => b'N',
         }
     }
 
@@ -115,7 +114,6 @@ impl VoteChoice {
         match self {
             VoteChoice::Yes => "yes",
             VoteChoice::No => "no",
-            VoteChoice::Abstain => "abstain",
         }
     }
 }
@@ -125,7 +123,7 @@ impl VoteChoice {
 pub struct SignedVote {
     /// Hex-encoded 32-byte ed25519 public key of the voter
     pub voter_public_key: String,
-    /// "yes", "no", or "abstain"
+    /// "yes" or "no"
     pub vote: String,
     /// Hex-encoded 64-byte ed25519 signature over (proposal_id_le8 || vote_byte)
     pub signature: String,
