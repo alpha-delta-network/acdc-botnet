@@ -1,0 +1,67 @@
+scenario:
+  metadata:
+    id: "T1.3"
+    name: "Basic TX Lifecycle"
+    type: functional
+    duration_estimate: "30-60 sec"
+    priority: P0
+
+  description: >
+    Submit a basic AX transfer on Alpha chain and verify it confirms within 30s.
+    This is the T1.3 gate — proves the transaction submission → mempool → block
+    inclusion pipeline is operational end-to-end.
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+
+    bots:
+      - id: "sender-1"
+        role: "general_user"
+        variant: "standard"
+        wallet_ax: 100000
+
+      - id: "receiver-1"
+        role: "general_user"
+        variant: "standard"
+        wallet_ax: 0
+
+  phases:
+    - name: "Get current block height"
+      bot: "sender-1"
+      behavior: "query.block_height"
+      assertions:
+        - height_gt: 0
+      timeout: 10s
+
+    - name: "Submit AX transfer"
+      bot: "sender-1"
+      behavior: "transfer.ax"
+      params:
+        recipient: "receiver-1"
+        amount: 1000
+      assertions:
+        - transaction_id_generated
+        - accepted: true
+      timeout: 15s
+
+    - name: "Wait for inclusion"
+      delay: 10s
+
+    - name: "Verify confirmation"
+      bot: "sender-1"
+      behavior: "query.transaction_status"
+      assertions:
+        - transaction_confirmed
+      timeout: 15s
+
+    - name: "Verify balance updated"
+      bot: "receiver-1"
+      behavior: "query.balance"
+      assertions:
+        - balance_gte: 1000
+      timeout: 10s
+
+  success_criteria:
+    - all_phases_passed
+    - confirmation_under: 30s
