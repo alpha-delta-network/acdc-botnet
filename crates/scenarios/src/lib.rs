@@ -1,3 +1,4 @@
+pub mod byzantine_tests;
 pub mod loader;
 /// Scenario framework
 ///
