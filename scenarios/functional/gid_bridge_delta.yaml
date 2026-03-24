@@ -1,0 +1,143 @@
+scenario:
+  metadata:
+    id: "GID-FUNC-002"
+    name: "GID Mint to CLP Shield to Bridge Round Trip"
+    type: functional
+    category: gid_bridge
+    duration: "30 min"
+    description: "Full Alpha-Delta-Alpha round trip via GID mint, CLP shield, locked_pool bridge"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "gid1_initiator"
+        role: "gid_initiator"
+        gid_id: "GID-1"
+        wallet_ax: 1000
+
+      - id: "gid1_follower_1"
+        role: "gid_follower"
+        gid_id: "GID-1"
+        follower_index: 1
+        wallet_ax: 100
+
+      - id: "gid1_follower_2"
+        role: "gid_follower"
+        gid_id: "GID-1"
+        follower_index: 2
+        wallet_ax: 100
+
+      - id: "gid1_follower_3"
+        role: "gid_follower"
+        gid_id: "GID-1"
+        follower_index: 3
+        wallet_ax: 100
+
+      - id: "gid1_follower_4"
+        role: "gid_follower"
+        gid_id: "GID-1"
+        follower_index: 4
+        wallet_ax: 100
+
+      - id: "wallet_3"
+        role: "bridge_user"
+        wallet_ax: 100
+        wallet_sax: 0
+
+  phases:
+    - id: "p1_propose"
+      name: "GID-1 Propose 10000 AX Mint"
+      bots: "gid1_initiator"
+      behavior: "gid.propose_mint"
+      params:
+        gid_id: "GID-1"
+        recipient: "wallet_3"
+        amount: 10000000000
+      capture:
+        - action_id
+
+    - id: "p2_approve"
+      name: "4 Followers Approve"
+      bots:
+        - gid1_follower_1
+        - gid1_follower_2
+        - gid1_follower_3
+        - gid1_follower_4
+      parallel: true
+      behavior: "gid.approve_mint"
+      params:
+        action_id: "$captured.action_id"
+
+    - id: "p3_execute"
+      name: "Execute Mint"
+      bots: "gid1_initiator"
+      behavior: "gid.execute_mint"
+      params:
+        action_id: "$captured.action_id"
+        recipient: "wallet_3"
+        amount: 10000000000
+
+    - id: "p4_shield"
+      name: "wallet-3 Shields 10000 AX via clp.alpha"
+      bots: "wallet_3"
+      behavior: "clp.shield"
+      params:
+        amount: 10000000000
+      capture:
+        - credits_record
+
+    - id: "p5_lock"
+      name: "wallet-3 Locks 5000 AX for sAX"
+      bots: "wallet_3"
+      behavior: "locked_pool.lock_for_sax"
+      params:
+        amount: 5000000000
+      capture:
+        - lock_id
+
+    - id: "p6_wait_delta"
+      name: "Wait for Delta sAX mint"
+      bots: "wallet_3"
+      behavior: "check_balance"
+      params:
+        chain: "delta"
+        asset: "sax"
+        expected_min: 5000000000
+        poll_timeout: 120
+        poll_interval: 5
+
+    - id: "p7_dex_order"
+      name: "Delta DEX Spot Order with sAX"
+      bots: "wallet_3"
+      behavior: "delta.dex_place_order"
+      params:
+        pair: "SAX/DX"
+        side: "sell"
+        amount: 1000000000
+        price: 1000000
+
+    - id: "p8_burn_sax"
+      name: "Burn sAX back to Alpha"
+      bots: "wallet_3"
+      behavior: "delta.burn_for_ax"
+      params:
+        amount: 4000000000
+      capture:
+        - burn_attestation
+
+    - id: "p9_verify"
+      name: "Verify Alpha Balance Released"
+      bots: "wallet_3"
+      behavior: "check_balance"
+      params:
+        chain: "alpha"
+        asset: "ax"
+        expected_min: 4000000000
+
+  success_criteria:
+    all_phases_pass: true
+    bridge_round_trip_complete: true
+    final_ax_balance_correct: true
