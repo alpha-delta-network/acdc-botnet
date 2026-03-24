@@ -16,7 +16,13 @@ import hashlib
 import json
 import os
 import random
+import secrets
 import time
+def _generate_tx_id() -> str:
+    """Generate a random transaction ID in at1... format."""
+    return "at1" + secrets.token_hex(29)
+
+
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
@@ -110,22 +116,54 @@ def _forged_proof_bytes(attack_type: str) -> bytes:
         return os.urandom(128)
 
 
+def _parse_tx_id(output: str) -> Optional[str]:
+    """Extract transaction_id from adnet CLI output (JSON or plain line)."""
+    try:
+        data = json.loads(output.strip())
+        return data.get("transaction_id") or data.get("id")
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith("at1") or line.startswith("tx1"):
+            return line
+        if "transaction_id" in line:
+            parts = line.split(":")
+            if len(parts) >= 2:
+                return parts[-1].strip().strip('"').strip(",")
+    return None
+
+
 # ─── Behavior implementations ─────────────────────────────────────────────────
 
 # transfer.*
 
 def transfer_casual(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
+    """Submit a real AX transfer via adnet CLI (transfer_public via ZK synthesizer)."""
+    import subprocess
     wallets: list = extra.get("funded_wallets", [])
     recipient = params.get("recipient") or (
         wallets[1].alpha_addr if len(wallets) > 1 else "ac1test000000000000000000000000000000000000000000"
     )
     amount = params.get("amount", random.randint(100, 10_000))
-    tx_str = _dummy_tx(key.alpha_addr, recipient, amount)
-    resp = client.broadcast_transaction(tx_str)
-    if resp.ok:
-        tx_id = resp.json_field("transaction_id") or resp.json_field("id") or "unknown"
-        return BehaviorResult.ok("transfer.casual", tx_id=tx_id, http_status=resp.status)
-    return BehaviorResult.fail("transfer.casual", str(resp.error or resp.body), resp.status)
+
+    result = subprocess.run(
+        [
+            "/usr/local/bin/adnet", "alpha", "account", "transfer",
+            "--to", recipient,
+            "--amount", str(amount),
+            "--node", client.rpc_base,
+        ],
+        env={**os.environ, "ADNET_PRIVATE_KEY": key.private_key},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    if result.returncode == 0:
+        tx_id = _parse_tx_id(result.stdout) or "unknown"
+        return BehaviorResult.ok("transfer.casual", tx_id=tx_id)
+    return BehaviorResult.fail("transfer.casual", result.stderr or result.stdout)
 
 
 def transfer_continuous(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
@@ -316,6 +354,7 @@ def submit_forged_proof(client: AlphaClient, params: dict, key: KeyEntry, extra:
     proof_bytes = _forged_proof_bytes(attack_type)
     proof_b64 = proof_bytes.hex()
     tx = json.dumps({
+        "id": _generate_tx_id(),
         "type": "shielded_transfer",
         "from": key.alpha_addr,
         "to": key.alpha_addr,
