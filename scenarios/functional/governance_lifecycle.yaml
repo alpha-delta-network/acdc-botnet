@@ -26,6 +26,13 @@ scenario:
         wallet_ax: 15000000
 
   phases:
+    - name: "Initialize governance program"
+      duration: "2 min"
+      bots: "governor-{1-1}"
+      behavior: "governance.initialize"
+      assertions:
+        - governance_initialized: true
+
     - name: "Submit diverse proposals"
       duration: "15 min"
       concurrent:
