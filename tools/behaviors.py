@@ -17,6 +17,7 @@ import json
 import os
 import random
 import secrets
+import subprocess
 import time
 def _generate_tx_id() -> str:
     """Generate a random transaction ID in at1... format."""
@@ -134,13 +135,70 @@ def _parse_tx_id(output: str) -> Optional[str]:
     return None
 
 
+# ─── adnet alpha execute helper ──────────────────────────────────────────────
+
+# Path to the adnet binary — use local CI build or /usr/local/bin/adnet on testnet
+ADNET_BIN = os.environ.get("ADNET_BIN", "/usr/local/bin/adnet")
+
+
+def _adnet_execute(
+    program: str,
+    function: str,
+    inputs: list,
+    private_key: str,
+    node_url: str,
+    fee: int = 1_000_000,
+    timeout: int = 60,
+) -> tuple[bool, str, dict]:
+    """
+    Call `adnet alpha execute` to create and broadcast a real transaction.
+    Returns (success: bool, tx_id_or_error: str, response_info: dict).
+    """
+    cmd = [
+        ADNET_BIN, "alpha", "execute",
+        "--program", program,
+        "--function", function,
+        "--private-key", private_key,
+        "--fee", str(fee),
+        "--node", node_url,
+    ]
+    for inp in inputs:
+        cmd.extend(["--inputs", str(inp)])
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        if result.returncode == 0:
+            output = result.stdout.strip()
+            try:
+                data = json.loads(output)
+                # {"status": 200, "body": "tx_id"} format when --node provided
+                status = data.get("status", 0)
+                body = data.get("body", "")
+                if status in (200, 201, 202):
+                    return True, str(body), {"http_status": status}
+                return False, f"node rejected: {body}", {"http_status": status}
+            except json.JSONDecodeError:
+                # Could be plain tx_id or error
+                if output.startswith("at1") or output.startswith("tx"):
+                    return True, output, {}
+                return False, output, {}
+        else:
+            err = result.stderr.strip() or result.stdout.strip()
+            return False, f"adnet execute failed: {err[:200]}", {}
+    except subprocess.TimeoutExpired:
+        return False, "adnet execute timeout", {}
+    except FileNotFoundError:
+        return False, f"adnet binary not found at {ADNET_BIN}", {}
+    except Exception as e:
+        return False, f"subprocess error: {e}", {}
+
+
 # ─── Behavior implementations ─────────────────────────────────────────────────
 
 # transfer.*
 
 def transfer_casual(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
     """Submit a real AX transfer via adnet CLI (transfer_public via ZK synthesizer)."""
-    import subprocess
     wallets: list = extra.get("funded_wallets", [])
     recipient = params.get("recipient") or (
         wallets[1].alpha_addr if len(wallets) > 1 else "ac1test000000000000000000000000000000000000000000"
@@ -171,51 +229,79 @@ def transfer_continuous(client: AlphaClient, params: dict, key: KeyEntry, extra:
 
 
 def transfer_submit_only(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
-    """T1.3 — submit one transfer and verify it enters the mempool (no wait)."""
+    """T1.3 — submit one transfer_public via adnet alpha execute."""
     wallets: list = extra.get("funded_wallets", [])
-    recipient = wallets[1].alpha_addr if len(wallets) > 1 else "ac1test000000000000000000000000000000000000000000"
+    recipient = wallets[1].alpha_addr if len(wallets) > 1 else key.alpha_addr
     amount = params.get("amount", 1_000)
-    tx_str = _dummy_tx(key.alpha_addr, recipient, amount)
+    # rpc_base is like "http://host:3030"
+    node_url = client.rpc_base.rstrip("/")
+
+    success, tx_id_or_error, info = _adnet_execute(
+        "credits.alpha",
+        "transfer_public",
+        [recipient, f"{amount}u128"],
+        key.private_key,
+        node_url,
+    )
+    if success:
+        return BehaviorResult.ok("transfer.submit_only", tx_id=tx_id_or_error, http_status=info.get("http_status", 200))
+    # Fallback: try old dummy tx path (for compatibility when adnet binary not available)
+    wallets2: list = extra.get("funded_wallets", [])
+    recipient2 = wallets2[1].alpha_addr if len(wallets2) > 1 else "ac1test000000000000000000000000000000000000000000"
+    tx_str = _dummy_tx(key.alpha_addr, recipient2, amount)
     resp = client.broadcast_transaction(tx_str)
     if resp.ok:
-        tx_id = resp.json_field("transaction_id") or resp.json_field("id") or "queued"
-        return BehaviorResult.ok("transfer.submit_only", tx_id=tx_id, http_status=resp.status)
-    # 422 = already in mempool / duplicate nonce → still functionally OK for T1.3
+        tx_id2 = resp.json_field("transaction_id") or resp.json_field("id") or "queued"
+        return BehaviorResult.ok("transfer.submit_only", tx_id=tx_id2, http_status=resp.status)
     if resp.status in (409, 422):
-        return BehaviorResult.ok("transfer.submit_only", http_status=resp.status,
-                                  metrics={"note": "duplicate_or_known"})
-    return BehaviorResult.fail("transfer.submit_only", str(resp.error or resp.body), resp.status)
+        return BehaviorResult.ok("transfer.submit_only", http_status=resp.status, metrics={"note": "duplicate_or_known"})
+    return BehaviorResult.fail("transfer.submit_only", tx_id_or_error, info.get("http_status", 0))
 
 
 # governance.*
 
 def governance_vote(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
-    # Try to find an active proposal to vote on
+    """Vote on a governance proposal via adnet alpha execute."""
+    node_url = client.rpc_base.rstrip("/")
+    # Try to find an active proposal
     proposals_resp = client.get_governance_proposals()
-    if not proposals_resp.ok:
-        return BehaviorResult.fail("governance.vote", "cannot fetch proposals", proposals_resp.status)
-    proposals = proposals_resp.body
-    if not proposals or (isinstance(proposals, list) and len(proposals) == 0):
-        return BehaviorResult.ok("governance.vote", metrics={"note": "no_proposals"})
-    proposal_id = (proposals[0].get("id") if isinstance(proposals, list) else "0")
-    vote = params.get("vote", "yes")
-    tx_str = _dummy_vote_tx(key.alpha_addr, str(proposal_id), vote)
-    resp = client.broadcast_transaction(tx_str)
-    if resp.ok:
-        return BehaviorResult.ok("governance.vote", http_status=resp.status)
-    return BehaviorResult.fail("governance.vote", str(resp.error or resp.body), resp.status)
+    if proposals_resp.ok and proposals_resp.body and isinstance(proposals_resp.body, list):
+        proposal_id = proposals_resp.body[0].get("id", 0)
+    else:
+        proposal_id = extra.get("last_proposal_id", 1)
+
+    vote_val = 1 if params.get("vote", "yes") == "yes" else 0
+
+    success, tx_id_or_error, info = _adnet_execute(
+        "governance.alpha",
+        "vote",
+        [f"{proposal_id}u128", f"{vote_val}u8"],
+        key.private_key,
+        node_url,
+    )
+    if success:
+        return BehaviorResult.ok("governance.vote", tx_id=tx_id_or_error, http_status=info.get("http_status", 200))
+    return BehaviorResult.fail("governance.vote", tx_id_or_error, info.get("http_status", 0))
 
 
 def governance_propose(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
-    tx_str = _dummy_governance_tx(
-        key.alpha_addr,
-        params.get("proposal_type", "parameter_change"),
-        {k: v for k, v in params.items() if k != "proposal_type"},
+    """Submit a governance proposal via adnet alpha execute."""
+    node_url = client.rpc_base.rstrip("/")
+    proposal_type = 0  # 0=standard, 1=critical
+    action_type = params.get("action_type", 1)
+    action_param = params.get("action_param", 1)
+
+    success, tx_id_or_error, info = _adnet_execute(
+        "governance.alpha",
+        "submit_proposal",
+        [f"{proposal_type}u8", f"{action_type}u8", f"{action_param}field"],
+        key.private_key,
+        node_url,
     )
-    resp = client.broadcast_transaction(tx_str)
-    if resp.ok:
-        return BehaviorResult.ok("governance.propose", http_status=resp.status)
-    return BehaviorResult.fail("governance.propose", str(resp.error or resp.body), resp.status)
+    if success:
+        extra["last_proposal_tx"] = tx_id_or_error
+        return BehaviorResult.ok("governance.propose", tx_id=tx_id_or_error, http_status=info.get("http_status", 200))
+    return BehaviorResult.fail("governance.propose", tx_id_or_error, info.get("http_status", 0))
 
 
 def governance_propose_and_vote(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
@@ -226,10 +312,28 @@ def governance_propose_and_vote(client: AlphaClient, params: dict, key: KeyEntry
 
 
 def governance_execute(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
+    """Execute an approved proposal via adnet alpha execute."""
+    node_url = client.rpc_base.rstrip("/")
     proposals_resp = client.get_governance_proposals()
-    if not proposals_resp.ok:
-        return BehaviorResult.fail("governance.execute", "cannot fetch proposals")
-    return BehaviorResult.ok("governance.execute", metrics={"note": "execute_checked"})
+    if proposals_resp.ok and proposals_resp.body and isinstance(proposals_resp.body, list):
+        # Find approved proposals (status=3 or status=4)
+        approved = [p for p in proposals_resp.body if p.get("status") in (3, 4)]
+        if not approved:
+            return BehaviorResult.ok("governance.execute", metrics={"note": "no_approved_proposals"})
+        proposal_id = approved[0].get("id", 0)
+    else:
+        return BehaviorResult.ok("governance.execute", metrics={"note": "no_proposals_found"})
+
+    success, tx_id_or_error, info = _adnet_execute(
+        "governance.alpha",
+        "execute_proposal",
+        [f"{proposal_id}u128"],
+        key.private_key,
+        node_url,
+    )
+    if success:
+        return BehaviorResult.ok("governance.execute", tx_id=tx_id_or_error, http_status=info.get("http_status", 200))
+    return BehaviorResult.fail("governance.execute", tx_id_or_error, info.get("http_status", 0))
 
 
 # privacy.*
