@@ -336,6 +336,24 @@ def governance_execute(client: AlphaClient, params: dict, key: KeyEntry, extra: 
     return BehaviorResult.fail("governance.execute", tx_id_or_error, info.get("http_status", 0))
 
 
+def governance_initialize(client, params, key, extra):
+    """Initialize governance.alpha program (must run before submit_proposal)."""
+    node_url = client.rpc_base.rstrip("/")
+    admin_addr = key.alpha_addr
+    success, tx_id_or_error, info = _adnet_execute(
+        "governance.alpha", "initialize",
+        [admin_addr], key.private_key, node_url,
+    )
+    if success:
+        extra["governance_initialized"] = True
+        return BehaviorResult.ok("governance.initialize", tx_id=tx_id_or_error, http_status=info.get("http_status", 200))
+    err = tx_id_or_error.lower()
+    if "assert" in err or "already" in err or "config" in err:
+        extra["governance_initialized"] = True
+        return BehaviorResult.ok("governance.initialize", metrics={"note": "already_initialized"})
+    return BehaviorResult.fail("governance.initialize", tx_id_or_error, info.get("http_status", 0))
+
+
 # privacy.*
 
 def privacy_shielded_transfer(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
@@ -617,6 +635,7 @@ _REGISTRY: Dict[str, tuple] = {
     "governance.vote":                    (governance_vote,                   "alpha"),
     "governance.propose":                 (governance_propose,                "alpha"),
     "governance.propose_and_vote":        (governance_propose_and_vote,       "alpha"),
+    "governance.initialize":              (governance_initialize,             "alpha"),
     "governance.execute":                 (governance_execute,                "alpha"),
     "privacy.shielded_transfer":          (privacy_shielded_transfer,         "alpha"),
     "dex.spot_trade":                     (dex_spot_trade,                    "delta"),
