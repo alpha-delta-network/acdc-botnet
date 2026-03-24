@@ -110,77 +110,77 @@ class AlphaClient:
     # ── Blocks ────────────────────────────────────────────────────────────────
 
     def get_height(self) -> Response:
-        return _get(f"{self.rpc_base}/testnet/block/height/latest", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/block/height/latest", timeout=self.timeout)
 
     def get_block(self, height: int) -> Response:
-        return _get(f"{self.rpc_base}/testnet/block/{height}", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/block/height/{height}", timeout=self.timeout)
 
     def get_latest_block(self) -> Response:
-        return _get(f"{self.rpc_base}/testnet/block/latest", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/block/latest", timeout=self.timeout)
 
     # ── Transactions ──────────────────────────────────────────────────────────
 
     def broadcast_transaction(self, tx_json: str) -> Response:
         """Broadcast a serialized transaction (hex string or JSON-encoded)."""
         payload = {"transaction": tx_json}
-        return _post(f"{self.rpc_base}/testnet/transaction/broadcast", payload, timeout=30)
+        return _post(f"{self.rpc_base}/mainnet/transaction/broadcast", payload, timeout=30)
 
     def broadcast_transaction_bytes(self, tx_bytes: bytes) -> Response:
-        return _post_raw(f"{self.rpc_base}/testnet/transaction/broadcast", tx_bytes, timeout=30)
+        return _post_raw(f"{self.rpc_base}/mainnet/transaction/broadcast", tx_bytes, timeout=30)
 
     def get_transaction(self, tx_id: str) -> Response:
-        return _get(f"{self.rpc_base}/testnet/transaction/{tx_id}", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/transaction/{tx_id}", timeout=self.timeout)
 
     def get_transaction_status(self, tx_id: str) -> Response:
-        return _get(f"{self.rpc_base}/testnet/transaction/{tx_id}/status", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/transaction/{tx_id}/status", timeout=self.timeout)
 
     def get_mempool(self) -> Response:
-        return _get(f"{self.rpc_base}/testnet/memoryPool/transactions", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/memoryPool/transactions", timeout=self.timeout)
 
     def get_mempool_size(self) -> Response:
-        return _get(f"{self.rpc_base}/testnet/memoryPool/size", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/memoryPool/size", timeout=self.timeout)
 
     # ── Accounts ──────────────────────────────────────────────────────────────
 
     def get_balance(self, address: str) -> Response:
-        return _get(f"{self.rpc_base}/testnet/program/credits.aleo/mapping/account/{address}", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/program/credits.alpha/mapping/account/{address}", timeout=self.timeout)
 
     def get_record(self, record_id: str) -> Response:
-        return _get(f"{self.rpc_base}/testnet/record/{record_id}", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/record/{record_id}", timeout=self.timeout)
 
     # ── Governance ────────────────────────────────────────────────────────────
 
     def get_governance_proposals(self) -> Response:
-        return _get(f"{self.rpc_base}/testnet/program/governance.aleo/mapping/proposals", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/program/governance.alpha/mapping/proposals", timeout=self.timeout)
 
     def get_governance_votes(self, proposal_id: str) -> Response:
-        return _get(f"{self.rpc_base}/testnet/program/governance.aleo/mapping/votes/{proposal_id}", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/program/governance.alpha/mapping/votes/{proposal_id}", timeout=self.timeout)
 
     def get_governance_state(self) -> Response:
-        return _get(f"{self.rpc_base}/testnet/program/governance.aleo/mapping/state", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/program/governance.alpha/mapping/state", timeout=self.timeout)
 
     # ── Network ───────────────────────────────────────────────────────────────
 
     def get_peers_count(self) -> Response:
-        return _get(f"{self.rpc_base}/testnet/peers/count", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/peers/count", timeout=self.timeout)
 
     def get_peers(self) -> Response:
-        return _get(f"{self.rpc_base}/testnet/peers/all", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/peers/all", timeout=self.timeout)
 
     def get_committee(self) -> Response:
-        return _get(f"{self.rpc_base}/testnet/latest/committee", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/committee/latest", timeout=self.timeout)
 
     def get_state_root(self) -> Response:
-        return _get(f"{self.rpc_base}/testnet/stateRoot/latest", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/stateRoot/latest", timeout=self.timeout)
 
     # ── Programs ──────────────────────────────────────────────────────────────
 
     def get_program(self, program_id: str) -> Response:
-        return _get(f"{self.rpc_base}/testnet/program/{program_id}", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/program/{program_id}", timeout=self.timeout)
 
     def get_mapping_value(self, program_id: str, mapping: str, key: str) -> Response:
         return _get(
-            f"{self.rpc_base}/testnet/program/{program_id}/mapping/{mapping}/{key}",
+            f"{self.rpc_base}/mainnet/program/{program_id}/mapping/{mapping}/{key}",
             timeout=self.timeout,
         )
 
