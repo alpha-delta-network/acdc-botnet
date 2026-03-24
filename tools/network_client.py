@@ -113,7 +113,7 @@ class AlphaClient:
         return _get(f"{self.rpc_base}/mainnet/block/height/latest", timeout=self.timeout)
 
     def get_block(self, height: int) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/block/height/{height}", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/block/{height}", timeout=self.timeout)
 
     def get_latest_block(self) -> Response:
         return _get(f"{self.rpc_base}/mainnet/block/latest", timeout=self.timeout)
@@ -122,7 +122,7 @@ class AlphaClient:
 
     def broadcast_transaction(self, tx_json: str) -> Response:
         """Broadcast a serialized transaction (hex string or JSON-encoded)."""
-        payload = {"transaction": tx_json}
+        payload = json.loads(tx_json) if isinstance(tx_json, str) else tx_json
         return _post(f"{self.rpc_base}/mainnet/transaction/broadcast", payload, timeout=30)
 
     def broadcast_transaction_bytes(self, tx_bytes: bytes) -> Response:
@@ -168,7 +168,7 @@ class AlphaClient:
         return _get(f"{self.rpc_base}/mainnet/peers/all", timeout=self.timeout)
 
     def get_committee(self) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/committee/latest", timeout=self.timeout)
+        return _get(f"{self.rpc_base}/mainnet/latest/committee", timeout=self.timeout)
 
     def get_state_root(self) -> Response:
         return _get(f"{self.rpc_base}/mainnet/stateRoot/latest", timeout=self.timeout)
