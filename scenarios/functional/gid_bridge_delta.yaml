@@ -1,11 +1,11 @@
 scenario:
   metadata:
     id: "GID-FUNC-002"
-    name: "GID Mint to CLP Shield to Bridge Round Trip"
+    name: "GID Mint to Bridge Round Trip"
     type: functional
     category: gid_bridge
     duration: "30 min"
-    description: "Full Alpha-Delta-Alpha round trip via GID mint, CLP shield, locked_pool bridge"
+    description: "Full Alpha-Delta-Alpha round trip via GID mint, locked_pool bridge, Delta sAX, burn back"
 
   setup:
     network:
@@ -80,14 +80,16 @@ scenario:
         recipient: "wallet_3"
         amount: 10000000000
 
-    - id: "p4_shield"
-      name: "wallet-3 Shields 10000 AX via clp.alpha"
+    - id: "p4_verify_ax_record"
+      name: "Verify wallet-3 received credits.record from GID mint"
       bots: "wallet_3"
-      behavior: "clp.shield"
+      behavior: "check_balance"
       params:
-        amount: 10000000000
-      capture:
-        - credits_record
+        chain: "alpha"
+        asset: "ax"
+        expected_min: 10000000000
+        poll_timeout: 60
+        poll_interval: 5
 
     - id: "p5_lock"
       name: "wallet-3 Locks 5000 AX for sAX"
