@@ -197,8 +197,14 @@ def _adnet_execute(
 
 # transfer.*
 
+def _adnet_bin() -> str:
+    """Return the adnet binary path from ADNET_BIN env or fallback."""
+    return os.environ.get("ADNET_BIN", "/usr/local/bin/adnet")
+
+
 def transfer_casual(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
     """Submit a real AX transfer via adnet CLI (transfer_public via ZK synthesizer)."""
+    import subprocess
     wallets: list = extra.get("funded_wallets", [])
     recipient = params.get("recipient") or (
         wallets[1].alpha_addr if len(wallets) > 1 else "ac1test000000000000000000000000000000000000000000"
@@ -207,7 +213,7 @@ def transfer_casual(client: AlphaClient, params: dict, key: KeyEntry, extra: dic
 
     result = subprocess.run(
         [
-            "/usr/local/bin/adnet", "alpha", "account", "transfer",
+            _adnet_bin(), "alpha", "account", "transfer",
             "--to", recipient,
             "--amount", str(amount),
             "--node", client.rpc_base,
@@ -229,7 +235,7 @@ def transfer_continuous(client: AlphaClient, params: dict, key: KeyEntry, extra:
 
 
 def transfer_submit_only(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
-    """T1.3 — submit one transfer_public via adnet alpha execute."""
+    """T1.3 — submit a real AX transfer via adnet CLI (uses _adnet_execute helper)."""
     wallets: list = extra.get("funded_wallets", [])
     recipient = wallets[1].alpha_addr if len(wallets) > 1 else key.alpha_addr
     amount = params.get("amount", 1_000)

@@ -229,13 +229,14 @@ class AlphaClient:
 
 class DeltaClient:
     """
-    REST client for DeltaOS (port 3031).
+    REST client for DeltaOS (port 3031) and adnet-api (port 8080).
     DEX, perpetuals, oracle endpoints.
     """
 
-    def __init__(self, host: str, rpc_port: int = 3031, timeout: int = 10):
+    def __init__(self, host: str, rpc_port: int = 3031, api_port: int = 8080, timeout: int = 10):
         self.host = host
         self.rpc_base = f"http://{host}:{rpc_port}"
+        self.api_base = f"http://{host}:{api_port}"
         self.timeout = timeout
 
     def get_dex_pairs(self) -> Response:
@@ -245,7 +246,18 @@ class DeltaClient:
         return _get(f"{self.rpc_base}/delta/dex/orderbook/{pair}", timeout=self.timeout)
 
     def submit_order(self, order_tx: dict) -> Response:
-        return _post(f"{self.rpc_base}/delta/dex/order", order_tx, timeout=30)
+        """Submit a public DEX order via adnet-api PublicBlockQueue (port 8080)."""
+        import json as _json
+        tx_bytes_hex = _json.dumps(order_tx).encode().hex()
+        # Placeholder 32-byte proof; full Groth16 verification wired in Phase B.
+        proof_hex = "00" * 32
+        payload = {
+            "chain_id": "delta",
+            "tx_bytes": tx_bytes_hex,
+            "proof": proof_hex,
+            "fee": order_tx.get("fee", 150),
+        }
+        return _post(f"{self.api_base}/api/v1/transactions/submit/public", payload, timeout=30)
 
     def get_oracle_price(self, asset: str) -> Response:
         return _get(f"{self.rpc_base}/delta/oracle/price/{asset}", timeout=self.timeout)
