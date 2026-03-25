@@ -1,0 +1,91 @@
+scenario:
+  metadata:
+    id: "GID-FUNC-001"
+    name: "GID 5/6 Multisig Mint Flow"
+    type: functional
+    category: gid
+    duration: "10 min"
+    description: "Full 5/6 multisig mint lifecycle"
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "gid1_initiator"
+        role: "gid_initiator"
+        gid_id: "GID-1"
+        wallet_ax: 1000
+
+      - id: "gid1_follower_1"
+        role: "gid_follower"
+        gid_id: "GID-1"
+        follower_index: 1
+        wallet_ax: 100
+
+      - id: "gid1_follower_2"
+        role: "gid_follower"
+        gid_id: "GID-1"
+        follower_index: 2
+        wallet_ax: 100
+
+      - id: "gid1_follower_3"
+        role: "gid_follower"
+        gid_id: "GID-1"
+        follower_index: 3
+        wallet_ax: 100
+
+      - id: "gid1_follower_4"
+        role: "gid_follower"
+        gid_id: "GID-1"
+        follower_index: 4
+        wallet_ax: 100
+
+      - id: "wallet_3"
+        role: "recipient"
+        wallet_ax: 0
+
+  phases:
+    - id: "p1_propose"
+      name: "Propose Mint"
+      bots: "gid1_initiator"
+      behavior: "gid.propose_mint"
+      params:
+        gid_id: "GID-1"
+        recipient: "wallet_3"
+        amount: 5000000000
+      capture:
+        - action_id
+
+    - id: "p2_approve"
+      name: "Parallel Approvals by 4 followers"
+      bots:
+        - gid1_follower_1
+        - gid1_follower_2
+        - gid1_follower_3
+        - gid1_follower_4
+      parallel: true
+      behavior: "gid.approve_mint"
+      params:
+        action_id: "$captured.action_id"
+
+    - id: "p3_execute"
+      name: "Execute Mint"
+      bots: "gid1_initiator"
+      behavior: "gid.execute_mint"
+      params:
+        action_id: "$captured.action_id"
+        recipient: "wallet_3"
+        amount: 5000000000
+
+    - id: "p4_verify"
+      name: "Verify Balance"
+      bots: "wallet_3"
+      behavior: "check_balance"
+      params:
+        expected_min: 5000000000
+
+  success_criteria:
+    all_phases_pass: true
+    balance_verified: true

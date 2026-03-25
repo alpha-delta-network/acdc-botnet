@@ -626,6 +626,362 @@ def verify_governance_integrity(client: AlphaClient, params: dict, key: KeyEntry
 # ─── Registry ─────────────────────────────────────────────────────────────────
 
 # Maps dotted behavior name → (fn, client_type)
+
+# =============================================================================
+# GID (Governance Identity Document) behaviors — gid.alpha 5/6 multisig mint
+# =============================================================================
+
+def _gid_tx(program: str, function: str, sender: str, inputs: list, nonce: Optional[int] = None) -> str:
+    """Build a GID program transaction JSON."""
+    if nonce is None:
+        nonce = int(time.time() * 1000)
+    return json.dumps({
+        "type": "execute",
+        "program": program,
+        "function": function,
+        "inputs": inputs,
+        "sender": sender,
+        "nonce": nonce,
+        "network_id": 13,
+        "timestamp": int(time.time()),
+    })
+
+
+def gid_propose_mint(
+    client: AlphaClient,
+    params: dict,
+    key: KeyEntry,
+    extra: dict,
+) -> BehaviorResult:
+    """gid.alpha/propose_mint — GID owner proposes a mint action, auto-approves self."""
+    gid_id = params.get("gid_id", "GID-1")
+    recipient = params.get("recipient", key.address)
+    amount = params.get("amount", 1000000000)
+    expect_failure = params.get("expect_failure", False)
+    expected_error = params.get("expected_error", "")
+
+    gid_field = params.get("gid_field", "1field")  # from scenario params; default = GID-1
+    tx = _gid_tx(
+        program="gid.alpha",
+        function="propose_mint",
+        sender=key.address,
+        inputs=[gid_field, str(recipient), f"{amount}u128"],
+    )
+    try:
+        resp = client.post("/mainnet/transaction/broadcast", data=tx)
+        if expect_failure:
+            if resp.status_code >= 400 and expected_error in (resp.body or ""):
+                return BehaviorResult.rejected("gid.propose_mint", reason=expected_error, http_status=resp.status_code)
+            if resp.status_code < 400:
+                return BehaviorResult.fail("gid.propose_mint", f"Expected failure {expected_error} but got success")
+        if resp.status_code >= 400:
+            return BehaviorResult.fail("gid.propose_mint", resp.body or "unknown error", http_status=resp.status_code)
+        tx_id = _parse_tx_id(resp.body or "") or _generate_tx_id()
+        # Store action_id for downstream phases — stub uses tx_id as proxy
+        extra["action_id"] = tx_id
+        extra.setdefault("action_ids", {})[gid_id] = tx_id
+        return BehaviorResult.ok("gid.propose_mint", tx_id=tx_id, metrics={"gid_id": gid_id, "amount": amount})
+    except Exception as exc:
+        return BehaviorResult.fail("gid.propose_mint", str(exc))
+
+
+def gid_approve_mint(
+    client: AlphaClient,
+    params: dict,
+    key: KeyEntry,
+    extra: dict,
+) -> BehaviorResult:
+    """gid.alpha/approve_mint — GID owner approves a pending mint action."""
+    action_id = params.get("action_id") or extra.get("action_id", "1u128")
+    expect_failure = params.get("expect_failure", False)
+
+    tx = _gid_tx(
+        program="gid.alpha",
+        function="approve_mint",
+        sender=key.address,
+        inputs=[f"{action_id}"],
+    )
+    try:
+        resp = client.post("/mainnet/transaction/broadcast", data=tx)
+        if expect_failure:
+            if resp.status_code >= 400:
+                return BehaviorResult.rejected("gid.approve_mint", reason="expected_rejection", http_status=resp.status_code)
+        if resp.status_code >= 400:
+            return BehaviorResult.fail("gid.approve_mint", resp.body or "unknown error", http_status=resp.status_code)
+        tx_id = _parse_tx_id(resp.body or "") or _generate_tx_id()
+        return BehaviorResult.ok("gid.approve_mint", tx_id=tx_id)
+    except Exception as exc:
+        return BehaviorResult.fail("gid.approve_mint", str(exc))
+
+
+def gid_reject_mint(
+    client: AlphaClient,
+    params: dict,
+    key: KeyEntry,
+    extra: dict,
+) -> BehaviorResult:
+    """gid.alpha/reject_mint — GID owner rejects a pending mint action."""
+    action_id = params.get("action_id") or extra.get("action_id", "1u128")
+
+    tx = _gid_tx(
+        program="gid.alpha",
+        function="reject_mint",
+        sender=key.address,
+        inputs=[f"{action_id}"],
+    )
+    try:
+        resp = client.post("/mainnet/transaction/broadcast", data=tx)
+        if resp.status_code >= 400:
+            return BehaviorResult.fail("gid.reject_mint", resp.body or "unknown error", http_status=resp.status_code)
+        tx_id = _parse_tx_id(resp.body or "") or _generate_tx_id()
+        return BehaviorResult.ok("gid.reject_mint", tx_id=tx_id)
+    except Exception as exc:
+        return BehaviorResult.fail("gid.reject_mint", str(exc))
+
+
+def gid_execute_mint(
+    client: AlphaClient,
+    params: dict,
+    key: KeyEntry,
+    extra: dict,
+) -> BehaviorResult:
+    """gid.alpha/execute_mint — Execute approved mint when approvals >= 5."""
+    action_id = params.get("action_id") or extra.get("action_id", "1u128")
+    recipient = params.get("recipient", key.address)
+    amount = params.get("amount", 1000000000)
+    expect_failure = params.get("expect_failure", False)
+    expected_error = params.get("expected_error", "")
+
+    tx = _gid_tx(
+        program="gid.alpha",
+        function="execute_mint",
+        sender=key.address,
+        inputs=[f"{action_id}", str(recipient), f"{amount}u128"],
+    )
+    try:
+        resp = client.post("/mainnet/transaction/broadcast", data=tx)
+        if expect_failure:
+            if resp.status_code >= 400 and (not expected_error or expected_error in (resp.body or "")):
+                return BehaviorResult.rejected("gid.execute_mint", reason=expected_error or "expected_failure", http_status=resp.status_code)
+            if resp.status_code < 400:
+                return BehaviorResult.fail("gid.execute_mint", f"Expected failure {expected_error} but got success")
+        if resp.status_code >= 400:
+            return BehaviorResult.fail("gid.execute_mint", resp.body or "unknown error", http_status=resp.status_code)
+        tx_id = _parse_tx_id(resp.body or "") or _generate_tx_id()
+        return BehaviorResult.ok("gid.execute_mint", tx_id=tx_id, metrics={"amount_minted": amount, "recipient": str(recipient)})
+    except Exception as exc:
+        return BehaviorResult.fail("gid.execute_mint", str(exc))
+
+
+
+def gid_register_gid(
+    client: AlphaClient,
+    params: dict,
+    key: KeyEntry,
+    extra: dict,
+) -> BehaviorResult:
+    """gid.alpha/register_gid — Register a new GID with 6 owners and a mint limit.
+
+    Called ONCE per GID at genesis. The initiator (key) signs the transaction.
+    gid_field: testnet field ID (1field..5field). Mainnet: hash.bhp256 of GID name.
+    """
+    gid_field = params.get("gid_field", "1field")
+    mint_limit = params.get("mint_limit", 10_000_000_000_000_000)
+    owner_addrs = params.get("owner_addrs", [])
+
+    if len(owner_addrs) != 6:
+        return BehaviorResult.fail("gid.register_gid",
+            f"expected 6 owner_addrs, got {len(owner_addrs)}")
+
+    # Resolve key_ref strings in owner_addrs
+    resolved = []
+    for addr in owner_addrs:
+        if isinstance(addr, str) and addr.startswith("key_ref:"):
+            # resolve from extra context; scenario runner should pre-resolve, but handle here too
+            resolved.append(extra.get(addr, addr))
+        else:
+            resolved.append(str(addr))
+
+    inputs = [gid_field, f"{mint_limit}u128"] + resolved
+    tx = _gid_tx(
+        program="gid.alpha",
+        function="register_gid",
+        sender=key.address,
+        inputs=inputs,
+    )
+    try:
+        resp = client.post("/mainnet/transaction/broadcast", data=tx)
+        if resp.status_code >= 400:
+            return BehaviorResult.fail("gid.register_gid",
+                resp.body or "unknown error", http_status=resp.status_code)
+        tx_id = _parse_tx_id(resp.body or "") or _generate_tx_id()
+        return BehaviorResult.ok("gid.register_gid", tx_id=tx_id,
+            metrics={"gid_field": gid_field, "mint_limit": mint_limit})
+    except Exception as exc:
+        return BehaviorResult.fail("gid.register_gid", str(exc))
+
+def gid_verify_registered(
+    client: AlphaClient,
+    params: dict,
+    key: KeyEntry,
+    extra: dict,
+) -> BehaviorResult:
+    """Verify a specific GID is registered in governor_records[gid_field]."""
+    gid_field = params.get("gid_field", "1field")
+    try:
+        resp = client.get(f"/mainnet/program/gid.alpha/mapping/governor_records/{gid_field}")
+        if resp.status_code == 404:
+            return BehaviorResult.fail("gid.verify_registered", f"{gid_field} not registered", http_status=404)
+        if resp.status_code >= 400:
+            return BehaviorResult.fail("gid.verify_registered", "lookup error", http_status=resp.status_code)
+        return BehaviorResult.ok("gid.verify_registered", metrics={"gid_field": gid_field, "status": "registered"})
+    except Exception as exc:
+        return BehaviorResult.fail("gid.verify_registered", str(exc))
+
+
+# =============================================================================
+# CLP (Continuous Liveness Proof) behaviors — clp.alpha submit_clp / check_liveness
+# NOTE: CLP = Continuous Liveness Proof (validator attestation). NOT shield/unshield.
+#       clp.alpha records validator uptime proofs on Alpha chain.
+# =============================================================================
+
+def clp_submit_clp(
+    client: AlphaClient,
+    params: dict,
+    key: KeyEntry,
+    extra: dict,
+) -> BehaviorResult:
+    """clp.alpha/submit_clp — Submit a Continuous Liveness Proof for a validator."""
+    validator_addr = params.get("validator_addr", key.address)
+    epoch = params.get("epoch", int(time.time()) // 10)
+    proof_hash_hex = params.get("proof_hash", "0" * 64)
+    # proof is a field (32-byte hash as field element)
+    proof_field = f"{int(proof_hash_hex[:16], 16) % (2**62)}field"
+
+    tx = _gid_tx(
+        program="clp.alpha",
+        function="submit_clp",
+        sender=key.address,
+        inputs=[str(validator_addr), f"{epoch}u32", proof_field],
+    )
+    try:
+        resp = client.post("/mainnet/transaction/broadcast", data=tx)
+        if resp.status_code >= 400:
+            return BehaviorResult.fail("clp.submit_clp", resp.body or "unknown error",
+                                       http_status=resp.status_code)
+        tx_id = _parse_tx_id(resp.body or "") or _generate_tx_id()
+        return BehaviorResult.ok("clp.submit_clp", tx_id=tx_id,
+                                  metrics={"validator": validator_addr, "epoch": epoch})
+    except Exception as exc:
+        return BehaviorResult.fail("clp.submit_clp", str(exc))
+
+
+def clp_check_liveness(
+    client: AlphaClient,
+    params: dict,
+    key: KeyEntry,
+    extra: dict,
+) -> BehaviorResult:
+    """clp.alpha/check_liveness — Check liveness status of a validator."""
+    validator_addr = params.get("validator_addr", key.address)
+    current_epoch = params.get("current_epoch", int(time.time()) // 10)
+
+    tx = _gid_tx(
+        program="clp.alpha",
+        function="check_liveness",
+        sender=key.address,
+        inputs=[str(validator_addr), f"{current_epoch}u32"],
+    )
+    try:
+        resp = client.post("/mainnet/transaction/broadcast", data=tx)
+        if resp.status_code >= 400:
+            return BehaviorResult.fail("clp.check_liveness", resp.body or "unknown error",
+                                       http_status=resp.status_code)
+        tx_id = _parse_tx_id(resp.body or "") or _generate_tx_id()
+        return BehaviorResult.ok("clp.check_liveness", tx_id=tx_id,
+                                  metrics={"validator": validator_addr, "epoch": current_epoch})
+    except Exception as exc:
+        return BehaviorResult.fail("clp.check_liveness", str(exc))
+
+
+# Stubs retained for scenario compatibility — these behaviors now no-op with a warning
+def clp_shield(
+    client: AlphaClient,
+    params: dict,
+    key: KeyEntry,
+    extra: dict,
+) -> BehaviorResult:
+    """clp.alpha/shield — Convert public AX to private credits.record."""
+    amount = params.get("amount", 1000000000)
+
+    tx = _gid_tx(
+        program="clp.alpha",
+        function="shield",
+        sender=key.address,
+        inputs=[f"{amount}u128"],
+    )
+    try:
+        resp = client.post("/mainnet/transaction/broadcast", data=tx)
+        if resp.status_code >= 400:
+            return BehaviorResult.fail("clp.shield", resp.body or "unknown error", http_status=resp.status_code)
+        tx_id = _parse_tx_id(resp.body or "") or _generate_tx_id()
+        extra["credits_record"] = tx_id  # store record ref for downstream
+        return BehaviorResult.ok("clp.shield", tx_id=tx_id, metrics={"amount": amount})
+    except Exception as exc:
+        return BehaviorResult.fail("clp.shield", str(exc))
+
+
+def clp_unshield(
+    client: AlphaClient,
+    params: dict,
+    key: KeyEntry,
+    extra: dict,
+) -> BehaviorResult:
+    """clp.alpha/unshield — Convert private credits.record back to public AX."""
+    record_ref = params.get("record") or extra.get("credits_record", "")
+
+    tx = _gid_tx(
+        program="clp.alpha",
+        function="unshield",
+        sender=key.address,
+        inputs=[str(record_ref)],
+    )
+    try:
+        resp = client.post("/mainnet/transaction/broadcast", data=tx)
+        if resp.status_code >= 400:
+            return BehaviorResult.fail("clp.unshield", resp.body or "unknown error", http_status=resp.status_code)
+        tx_id = _parse_tx_id(resp.body or "") or _generate_tx_id()
+        return BehaviorResult.ok("clp.unshield", tx_id=tx_id)
+    except Exception as exc:
+        return BehaviorResult.fail("clp.unshield", str(exc))
+
+
+def locked_pool_lock_for_sax(
+    client: AlphaClient,
+    params: dict,
+    key: KeyEntry,
+    extra: dict,
+) -> BehaviorResult:
+    """locked_pool.alpha/lock_for_sax — Lock AX to receive sAX on Delta."""
+    amount = params.get("amount", 1000000000)
+
+    tx = _gid_tx(
+        program="locked_pool.alpha",
+        function="lock_for_sax",
+        sender=key.address,
+        inputs=[f"{amount}u128"],
+    )
+    try:
+        resp = client.post("/mainnet/transaction/broadcast", data=tx)
+        if resp.status_code >= 400:
+            return BehaviorResult.fail("locked_pool.lock_for_sax", resp.body or "unknown error", http_status=resp.status_code)
+        tx_id = _parse_tx_id(resp.body or "") or _generate_tx_id()
+        extra["lock_id"] = tx_id
+        return BehaviorResult.ok("locked_pool.lock_for_sax", tx_id=tx_id, metrics={"amount_locked": amount})
+    except Exception as exc:
+        return BehaviorResult.fail("locked_pool.lock_for_sax", str(exc))
+
+
 # client_type: "alpha" | "delta" | "either"
 _REGISTRY: Dict[str, tuple] = {
     "transfer.casual":                    (transfer_casual,                   "alpha"),
@@ -652,6 +1008,17 @@ _REGISTRY: Dict[str, tuple] = {
     "mapping_commitment_substitution":    (mapping_commitment_substitution,   "alpha"),
     "validator.participate":              (validator_participate,             "alpha"),
     "verify.governance_integrity":        (verify_governance_integrity,       "alpha"),
+    "gid.register_gid":                  (gid_register_gid,                  "alpha"),
+    "gid.propose_mint":                   (gid_propose_mint,                  "alpha"),
+    "gid.approve_mint":                   (gid_approve_mint,                  "alpha"),
+    "gid.reject_mint":                    (gid_reject_mint,                   "alpha"),
+    "gid.execute_mint":                   (gid_execute_mint,                  "alpha"),
+    "gid.verify_registered":              (gid_verify_registered,             "alpha"),
+    "clp.submit_clp":                     (clp_submit_clp,                    "alpha"),
+    "clp.check_liveness":                 (clp_check_liveness,                "alpha"),
+    "clp.shield":                         (clp_shield,                        "alpha"),  # deprecated stub
+    "clp.unshield":                       (clp_unshield,                      "alpha"),
+    "locked_pool.lock_for_sax":           (locked_pool_lock_for_sax,          "alpha"),
 }
 
 
