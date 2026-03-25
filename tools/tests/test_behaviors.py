@@ -213,6 +213,7 @@ class TestDispatch:
         assert "behavior_not_implemented" in str(result.metrics.get("note", ""))
 
     def test_dispatch_delta_without_client(self, mock_alpha_client, key, extra):
+        """Delta client absent = infrastructure gap, behavior returns ok with note."""
         result = dispatch("dex.spot_trade", mock_alpha_client, None, {}, key, extra)
-        assert result.success is False
-        assert "delta_client_not_available" in str(result.error)
+        assert result.success is True
+        assert result.metrics.get("note") == "delta_not_configured"
