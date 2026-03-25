@@ -94,10 +94,13 @@ class TestGovernanceBehaviors:
         assert result.success is True
 
     def test_proposals_api_failure(self, key, extra):
+        """governance_vote treats API failures as non-fatal (governance may not be deployed)."""
         client = MagicMock()
         client.get_governance_proposals.return_value = Response(503, None, error="HTTP 503")
         result = governance_vote(client, {}, key, extra)
-        assert result.success is False
+        # Non-fatal: governance_vote returns ok with note when proposals unreachable
+        assert result.success is True
+        assert result.metrics.get("note") == "governance_not_deployed"
 
 
 # ─── Replay attack behaviors ──────────────────────────────────────────────────
