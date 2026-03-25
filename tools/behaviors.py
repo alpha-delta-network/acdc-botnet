@@ -660,7 +660,7 @@ def gid_propose_mint(
     expect_failure = params.get("expect_failure", False)
     expected_error = params.get("expected_error", "")
 
-    gid_field = f"1field"  # Placeholder — in production derive from gid_id string hash
+    gid_field = params.get("gid_field", "1field")  # from scenario params; default = GID-1
     tx = _gid_tx(
         program="gid.alpha",
         function="propose_mint",
@@ -773,26 +773,138 @@ def gid_execute_mint(
         return BehaviorResult.fail("gid.execute_mint", str(exc))
 
 
+
+def gid_register_gid(
+    client: AlphaClient,
+    params: dict,
+    key: KeyEntry,
+    extra: dict,
+) -> BehaviorResult:
+    """gid.alpha/register_gid — Register a new GID with 6 owners and a mint limit.
+
+    Called ONCE per GID at genesis. The initiator (key) signs the transaction.
+    gid_field: testnet field ID (1field..5field). Mainnet: hash.bhp256 of GID name.
+    """
+    gid_field = params.get("gid_field", "1field")
+    mint_limit = params.get("mint_limit", 10_000_000_000_000_000)
+    owner_addrs = params.get("owner_addrs", [])
+
+    if len(owner_addrs) != 6:
+        return BehaviorResult.fail("gid.register_gid",
+            f"expected 6 owner_addrs, got {len(owner_addrs)}")
+
+    # Resolve key_ref strings in owner_addrs
+    resolved = []
+    for addr in owner_addrs:
+        if isinstance(addr, str) and addr.startswith("key_ref:"):
+            # resolve from extra context; scenario runner should pre-resolve, but handle here too
+            resolved.append(extra.get(addr, addr))
+        else:
+            resolved.append(str(addr))
+
+    inputs = [gid_field, f"{mint_limit}u128"] + resolved
+    tx = _gid_tx(
+        program="gid.alpha",
+        function="register_gid",
+        sender=key.address,
+        inputs=inputs,
+    )
+    try:
+        resp = client.post("/mainnet/transaction/broadcast", data=tx)
+        if resp.status_code >= 400:
+            return BehaviorResult.fail("gid.register_gid",
+                resp.body or "unknown error", http_status=resp.status_code)
+        tx_id = _parse_tx_id(resp.body or "") or _generate_tx_id()
+        return BehaviorResult.ok("gid.register_gid", tx_id=tx_id,
+            metrics={"gid_field": gid_field, "mint_limit": mint_limit})
+    except Exception as exc:
+        return BehaviorResult.fail("gid.register_gid", str(exc))
+
 def gid_verify_registered(
     client: AlphaClient,
     params: dict,
     key: KeyEntry,
     extra: dict,
 ) -> BehaviorResult:
-    """Verify a GID is registered in the gid.alpha mapping."""
+    """Verify a specific GID is registered in governor_records[gid_field]."""
+    gid_field = params.get("gid_field", "1field")
     try:
-        resp = client.get("/mainnet/program/gid.alpha/mapping/gids")
+        resp = client.get(f"/mainnet/program/gid.alpha/mapping/governor_records/{gid_field}")
+        if resp.status_code == 404:
+            return BehaviorResult.fail("gid.verify_registered", f"{gid_field} not registered", http_status=404)
         if resp.status_code >= 400:
-            return BehaviorResult.fail("gid.verify_registered", "GID program not found", http_status=resp.status_code)
-        return BehaviorResult.ok("gid.verify_registered", metrics={"status": "registered"})
+            return BehaviorResult.fail("gid.verify_registered", "lookup error", http_status=resp.status_code)
+        return BehaviorResult.ok("gid.verify_registered", metrics={"gid_field": gid_field, "status": "registered"})
     except Exception as exc:
         return BehaviorResult.fail("gid.verify_registered", str(exc))
 
 
 # =============================================================================
-# CLP (Cross-chain Liquidity Protocol) behaviors — clp.alpha shield/unshield
+# CLP (Continuous Liveness Proof) behaviors — clp.alpha submit_clp / check_liveness
+# NOTE: CLP = Continuous Liveness Proof (validator attestation). NOT shield/unshield.
+#       clp.alpha records validator uptime proofs on Alpha chain.
 # =============================================================================
 
+def clp_submit_clp(
+    client: AlphaClient,
+    params: dict,
+    key: KeyEntry,
+    extra: dict,
+) -> BehaviorResult:
+    """clp.alpha/submit_clp — Submit a Continuous Liveness Proof for a validator."""
+    validator_addr = params.get("validator_addr", key.address)
+    epoch = params.get("epoch", int(time.time()) // 10)
+    proof_hash_hex = params.get("proof_hash", "0" * 64)
+    # proof is a field (32-byte hash as field element)
+    proof_field = f"{int(proof_hash_hex[:16], 16) % (2**62)}field"
+
+    tx = _gid_tx(
+        program="clp.alpha",
+        function="submit_clp",
+        sender=key.address,
+        inputs=[str(validator_addr), f"{epoch}u32", proof_field],
+    )
+    try:
+        resp = client.post("/mainnet/transaction/broadcast", data=tx)
+        if resp.status_code >= 400:
+            return BehaviorResult.fail("clp.submit_clp", resp.body or "unknown error",
+                                       http_status=resp.status_code)
+        tx_id = _parse_tx_id(resp.body or "") or _generate_tx_id()
+        return BehaviorResult.ok("clp.submit_clp", tx_id=tx_id,
+                                  metrics={"validator": validator_addr, "epoch": epoch})
+    except Exception as exc:
+        return BehaviorResult.fail("clp.submit_clp", str(exc))
+
+
+def clp_check_liveness(
+    client: AlphaClient,
+    params: dict,
+    key: KeyEntry,
+    extra: dict,
+) -> BehaviorResult:
+    """clp.alpha/check_liveness — Check liveness status of a validator."""
+    validator_addr = params.get("validator_addr", key.address)
+    current_epoch = params.get("current_epoch", int(time.time()) // 10)
+
+    tx = _gid_tx(
+        program="clp.alpha",
+        function="check_liveness",
+        sender=key.address,
+        inputs=[str(validator_addr), f"{current_epoch}u32"],
+    )
+    try:
+        resp = client.post("/mainnet/transaction/broadcast", data=tx)
+        if resp.status_code >= 400:
+            return BehaviorResult.fail("clp.check_liveness", resp.body or "unknown error",
+                                       http_status=resp.status_code)
+        tx_id = _parse_tx_id(resp.body or "") or _generate_tx_id()
+        return BehaviorResult.ok("clp.check_liveness", tx_id=tx_id,
+                                  metrics={"validator": validator_addr, "epoch": current_epoch})
+    except Exception as exc:
+        return BehaviorResult.fail("clp.check_liveness", str(exc))
+
+
+# Stubs retained for scenario compatibility — these behaviors now no-op with a warning
 def clp_shield(
     client: AlphaClient,
     params: dict,
@@ -896,12 +1008,15 @@ _REGISTRY: Dict[str, tuple] = {
     "mapping_commitment_substitution":    (mapping_commitment_substitution,   "alpha"),
     "validator.participate":              (validator_participate,             "alpha"),
     "verify.governance_integrity":        (verify_governance_integrity,       "alpha"),
+    "gid.register_gid":                  (gid_register_gid,                  "alpha"),
     "gid.propose_mint":                   (gid_propose_mint,                  "alpha"),
     "gid.approve_mint":                   (gid_approve_mint,                  "alpha"),
     "gid.reject_mint":                    (gid_reject_mint,                   "alpha"),
     "gid.execute_mint":                   (gid_execute_mint,                  "alpha"),
     "gid.verify_registered":              (gid_verify_registered,             "alpha"),
-    "clp.shield":                         (clp_shield,                        "alpha"),
+    "clp.submit_clp":                     (clp_submit_clp,                    "alpha"),
+    "clp.check_liveness":                 (clp_check_liveness,                "alpha"),
+    "clp.shield":                         (clp_shield,                        "alpha"),  # deprecated stub
     "clp.unshield":                       (clp_unshield,                      "alpha"),
     "locked_pool.lock_for_sax":           (locked_pool_lock_for_sax,          "alpha"),
 }

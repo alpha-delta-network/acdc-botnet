@@ -1,0 +1,164 @@
+# gid_genesis_register.yaml
+# One-time post-genesis scenario: register all 5 GIDs on Alpha chain.
+#
+# Run ONCE after network genesis, before any GID mint operations.
+# Each GID's initiator calls gid.alpha/register_gid with all 6 owner addresses.
+#
+# Prerequisite: gid-keys.yaml loaded via --gid-keys flag OR keys embedded in testnet-keys YAML.
+#
+# Usage:
+#   python3 tools/run-suite.py \
+#     --scenario scenarios/ops/gid_genesis_register.yaml \
+#     --gid-keys /tmp/gid-keys.yaml \
+#     --nodes testnet001.ac-dc.network \
+#     --output /tmp/gid-register-result.yaml
+
+scenario:
+  metadata:
+    id: "GID-OPS-000"
+    name: "GID Genesis Registration"
+    type: ops
+    category: genesis
+    one_time: true
+    duration: "5 min"
+    description: >
+      Register all 5 GIDs on Alpha chain after testnet genesis.
+      Each initiator calls gid.alpha/register_gid with the GID's 6 owner addresses.
+      Testnet gid_ids: GID-1=1field .. GID-5=5field.
+      Mainnet: use hash.bhp256 of GID name.
+
+  key_source: gid_keys  # load from --gid-keys flag (gid-keys.yaml format)
+
+  setup:
+    network:
+      alpha_rest: "http://{node}:3030"
+
+    bots:
+      # GID-1 Economic Council Alpha
+      - id: "gid1_initiator"
+        role: "gid_initiator"
+        gid_id: "GID-1"
+        gid_field: "1field"
+        key_ref: "gid_keys.gids[0].initiator"
+
+      # GID-2 Technical Standards Alpha
+      - id: "gid2_initiator"
+        role: "gid_initiator"
+        gid_id: "GID-2"
+        gid_field: "2field"
+        key_ref: "gid_keys.gids[1].initiator"
+
+      # GID-3 Security Council Alpha
+      - id: "gid3_initiator"
+        role: "gid_initiator"
+        gid_id: "GID-3"
+        gid_field: "3field"
+        key_ref: "gid_keys.gids[2].initiator"
+
+      # GID-4 Treasury Alpha
+      - id: "gid4_initiator"
+        role: "gid_initiator"
+        gid_id: "GID-4"
+        gid_field: "4field"
+        key_ref: "gid_keys.gids[3].initiator"
+
+      # GID-5 Protocol Governance Alpha
+      - id: "gid5_initiator"
+        role: "gid_initiator"
+        gid_id: "GID-5"
+        gid_field: "5field"
+        key_ref: "gid_keys.gids[4].initiator"
+
+  phases:
+    - id: "p1_register_all"
+      name: "Register all 5 GIDs in parallel"
+      parallel: true
+      actions:
+        - bot: "gid1_initiator"
+          behavior: "gid.register_gid"
+          params:
+            gid_field: "1field"
+            mint_limit: 10000000000000000
+            owner_addrs:
+              - key_ref: "gid_keys.gids[0].initiator.alpha_addr"
+              - key_ref: "gid_keys.gids[0].followers[0].alpha_addr"
+              - key_ref: "gid_keys.gids[0].followers[1].alpha_addr"
+              - key_ref: "gid_keys.gids[0].followers[2].alpha_addr"
+              - key_ref: "gid_keys.gids[0].followers[3].alpha_addr"
+              - key_ref: "gid_keys.gids[0].followers[4].alpha_addr"
+
+        - bot: "gid2_initiator"
+          behavior: "gid.register_gid"
+          params:
+            gid_field: "2field"
+            mint_limit: 10000000000000000
+            owner_addrs:
+              - key_ref: "gid_keys.gids[1].initiator.alpha_addr"
+              - key_ref: "gid_keys.gids[1].followers[0].alpha_addr"
+              - key_ref: "gid_keys.gids[1].followers[1].alpha_addr"
+              - key_ref: "gid_keys.gids[1].followers[2].alpha_addr"
+              - key_ref: "gid_keys.gids[1].followers[3].alpha_addr"
+              - key_ref: "gid_keys.gids[1].followers[4].alpha_addr"
+
+        - bot: "gid3_initiator"
+          behavior: "gid.register_gid"
+          params:
+            gid_field: "3field"
+            mint_limit: 10000000000000000
+            owner_addrs:
+              - key_ref: "gid_keys.gids[2].initiator.alpha_addr"
+              - key_ref: "gid_keys.gids[2].followers[0].alpha_addr"
+              - key_ref: "gid_keys.gids[2].followers[1].alpha_addr"
+              - key_ref: "gid_keys.gids[2].followers[2].alpha_addr"
+              - key_ref: "gid_keys.gids[2].followers[3].alpha_addr"
+              - key_ref: "gid_keys.gids[2].followers[4].alpha_addr"
+
+        - bot: "gid4_initiator"
+          behavior: "gid.register_gid"
+          params:
+            gid_field: "4field"
+            mint_limit: 10000000000000000
+            owner_addrs:
+              - key_ref: "gid_keys.gids[3].initiator.alpha_addr"
+              - key_ref: "gid_keys.gids[3].followers[0].alpha_addr"
+              - key_ref: "gid_keys.gids[3].followers[1].alpha_addr"
+              - key_ref: "gid_keys.gids[3].followers[2].alpha_addr"
+              - key_ref: "gid_keys.gids[3].followers[3].alpha_addr"
+              - key_ref: "gid_keys.gids[3].followers[4].alpha_addr"
+
+        - bot: "gid5_initiator"
+          behavior: "gid.register_gid"
+          params:
+            gid_field: "5field"
+            mint_limit: 10000000000000000
+            owner_addrs:
+              - key_ref: "gid_keys.gids[4].initiator.alpha_addr"
+              - key_ref: "gid_keys.gids[4].followers[0].alpha_addr"
+              - key_ref: "gid_keys.gids[4].followers[1].alpha_addr"
+              - key_ref: "gid_keys.gids[4].followers[2].alpha_addr"
+              - key_ref: "gid_keys.gids[4].followers[3].alpha_addr"
+              - key_ref: "gid_keys.gids[4].followers[4].alpha_addr"
+
+    - id: "p2_verify"
+      name: "Verify all GIDs registered on-chain"
+      parallel: true
+      actions:
+        - bot: "gid1_initiator"
+          behavior: "gid.verify_registered"
+          params: { gid_field: "1field" }
+        - bot: "gid2_initiator"
+          behavior: "gid.verify_registered"
+          params: { gid_field: "2field" }
+        - bot: "gid3_initiator"
+          behavior: "gid.verify_registered"
+          params: { gid_field: "3field" }
+        - bot: "gid4_initiator"
+          behavior: "gid.verify_registered"
+          params: { gid_field: "4field" }
+        - bot: "gid5_initiator"
+          behavior: "gid.verify_registered"
+          params: { gid_field: "5field" }
+
+  success_criteria:
+    all_phases_pass: true
+    on_chain_verified: true
