@@ -74,16 +74,17 @@ def height_response() -> Response:
 def mock_alpha_client(ok_response, height_response):
     """Alpha client that accepts everything."""
     client = MagicMock()
+    client.base = "http://testnet001.ac-dc.network:8080"
     client.broadcast_transaction.return_value = ok_response
     client.broadcast_transaction_bytes.return_value = ok_response
     client.get_height.return_value = height_response
     client.get_height_int.return_value = 42
-    client.get_mempool.return_value = Response(status=200, body=[], raw=b"[]")
+    client.get_mempool.return_value = Response(status=200, body={"pending_count": 0, "transactions": []}, raw=b"{}")
     client.get_governance_proposals.return_value = Response(
-        status=200, body=[{"id": "prop-1", "status": "active"}], raw=b"[]"
+        status=200, body={"proposals": [{"id": 1, "status": "active"}], "total": 1}, raw=b"{}"
     )
-    client.get_governance_state.return_value = Response(status=200, body={"state": "active"}, raw=b"{}")
-    client.get_committee.return_value = Response(status=200, body={"members": ["v1", "v2", "v3", "v4"]}, raw=b"{}")
+    client.get_governance_state.return_value = Response(status=200, body={"proposals": [], "total": 0}, raw=b"{}")
+    client.get_committee.return_value = Response(status=200, body={"members": ["v1", "v2", "v3", "v4"], "epoch": 0}, raw=b"{}")
     client.get_transaction_status.return_value = Response(status=200, body="confirmed", raw=b'"confirmed"')
     return client
 
