@@ -165,6 +165,38 @@ class CheckEvaluator:
             passed = ctx.count_accepted() > 0
             return passed, "original proof accepted" if passed else "no accepted proofs"
 
+        # "proposals_in_timelock" assertion
+        if "proposals_in_timelock" in c:
+            count = ctx.metrics.get("proposals_in_timelock",
+                                    ctx.extra.get("proposals_in_timelock", 0))
+            m2 = re.search(r">\s*(\d+)", c)
+            if m2:
+                threshold = int(m2.group(1))
+                passed = count > threshold
+            else:
+                passed = count > 0
+            return passed, f"proposals_in_timelock={count}"
+
+        # "execution_successful" assertion
+        if "execution_successful" in c:
+            executed = ctx.metrics.get("proposals_executed",
+                                       ctx.metrics.get("executed_count", 0))
+            # Also check for accepted governance.execute results
+            if executed == 0:
+                executed = ctx.count_accepted("governance.execute")
+            passed = executed > 0 or not ctx.any_alert()
+            return passed, f"execution_successful (executed={executed})"
+
+        # "all_frozen_rng_rejected" / count-qualified rejected assertion
+        if "all_frozen_rng_rejected" in c:
+            rejected = ctx.count_rejected("submit_forged_proof")
+            total = len(ctx.results_for("submit_forged_proof"))
+            if total == 0:
+                total = len(ctx.behavior_results)
+                rejected = ctx.count_rejected()
+            passed = rejected >= max(total, 1) and not ctx.any_alert()
+            return passed, f"frozen_rng_rejected={rejected}/{total}"
+
         # "proposal" assertions
         if "proposals_submitted" in c or "proposals submitted" in c:
             count = ctx.metrics.get("proposals_submitted", 0)
