@@ -199,6 +199,7 @@ def _adnet_execute(
 
 def transfer_casual(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
     """Submit a real AX transfer via adnet CLI (transfer_public via ZK synthesizer)."""
+    import subprocess
     wallets: list = extra.get("funded_wallets", [])
     recipient = params.get("recipient") or (
         wallets[1].alpha_addr if len(wallets) > 1 else "ac1test000000000000000000000000000000000000000000"
