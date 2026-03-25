@@ -1618,6 +1618,9 @@ _REGISTRY: Dict[str, tuple] = {
     "gid.reject_mint":                        (gid_reject_mint,                     "alpha"),
     "gid.execute_mint":                       (gid_execute_mint,                    "alpha"),
     "gid.register_gid":                       (gid_register_gid,                    "alpha"),
+    "query.mempool":                          (monitor_mempool,                    "alpha"),
+    "spam.mempool_flood":                      (flood_mempool,                      "alpha"),
+
 }
 
 
