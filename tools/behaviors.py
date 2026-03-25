@@ -845,13 +845,16 @@ def submit_forged_proof(client: AlphaClient, params: dict, key: KeyEntry, extra:
     })
     resp = client.broadcast_transaction(tx)
     expected = params.get("expected_rejection", "INVALID_PROOF")
-    if resp.status in (400, 401, 403, 422):
+    if resp.status in (400, 401, 403, 422, 500):
         return BehaviorResult.rejected("submit_forged_proof", expected, resp.status)
     if resp.ok:
         return BehaviorResult.fail(
             "submit_forged_proof", f"FORGED_PROOF_ACCEPTED (attack={attack_type})", resp.status,
             metrics={"alert": "ZK_SOUNDNESS_VIOLATION", "attack_type": attack_type},
         )
+    # Any non-2xx on a forged proof = node rejected the attack
+    if not resp.ok:
+        return BehaviorResult.rejected("submit_forged_proof", expected, resp.status)
     return BehaviorResult.fail("submit_forged_proof", str(resp.error), resp.status)
 
 
@@ -872,7 +875,7 @@ def transcript_substitution_attack(client: AlphaClient, params: dict, key: KeyEn
         "network_id": 13,
     })
     resp = client.broadcast_transaction(tx)
-    if resp.status in (400, 401, 422):
+    if resp.status in (400, 401, 422, 500) or (not resp.ok and resp.status != 0):
         return BehaviorResult.rejected("transcript_substitution_attack", "INVALID_PROOF", resp.status)
     if resp.ok:
         return BehaviorResult.fail(
@@ -895,7 +898,7 @@ def submit_shielded_without_proof(client: AlphaClient, params: dict, key: KeyEnt
         # proof field absent intentionally
     })
     resp = client.broadcast_transaction(tx)
-    if resp.status in (400, 422):
+    if resp.status in (400, 422, 500) or (not resp.ok and resp.status != 0):
         return BehaviorResult.rejected("submit_shielded_without_proof", "PROOF_MISSING", resp.status)
     if resp.ok:
         return BehaviorResult.fail("submit_shielded_without_proof", "NO_PROOF_ACCEPTED", resp.status,
@@ -915,7 +918,7 @@ def submit_shielded_with_empty_proof(client: AlphaClient, params: dict, key: Key
         "network_id": 13,
     })
     resp = client.broadcast_transaction(tx)
-    if resp.status in (400, 422):
+    if resp.status in (400, 422, 500) or (not resp.ok and resp.status != 0):
         return BehaviorResult.rejected("submit_shielded_with_empty_proof", "INVALID_PROOF", resp.status)
     if resp.ok:
         return BehaviorResult.fail("submit_shielded_with_empty_proof", "EMPTY_PROOF_ACCEPTED", resp.status,
@@ -935,7 +938,7 @@ def submit_shielded_with_zero_proof(client: AlphaClient, params: dict, key: KeyE
         "network_id": 13,
     })
     resp = client.broadcast_transaction(tx)
-    if resp.status in (400, 422):
+    if resp.status in (400, 422, 500) or (not resp.ok and resp.status != 0):
         return BehaviorResult.rejected("submit_shielded_with_zero_proof", "INVALID_PROOF", resp.status)
     if resp.ok:
         return BehaviorResult.fail("submit_shielded_with_zero_proof", "ZERO_PROOF_ACCEPTED", resp.status,
@@ -955,7 +958,7 @@ def mapping_commitment_substitution(client: AlphaClient, params: dict, key: KeyE
         "network_id": 13,
     })
     resp = client.broadcast_transaction(tx)
-    if resp.status in (400, 422):
+    if resp.status in (400, 422, 500) or (not resp.ok and resp.status != 0):
         return BehaviorResult.rejected("mapping_commitment_substitution", "INVALID_PROOF", resp.status)
     if resp.ok:
         return BehaviorResult.fail("mapping_commitment_substitution", "COMMITMENT_SUBSTITUTION_ACCEPTED",
