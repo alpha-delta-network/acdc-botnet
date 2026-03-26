@@ -111,6 +111,11 @@ class AlphaClient:
         self.base = f"http://{host}:{port}"
         self.timeout = timeout
 
+    @property
+    def rpc_base(self) -> str:
+        """Internal RPC URL (port 3030) used by adnet CLI and program execution."""
+        return f"http://{self.host}:3030"
+
     # ── Health ────────────────────────────────────────────────────────────────
 
     def health(self) -> Response:
@@ -256,6 +261,11 @@ class DeltaClient:
         self.host = host
         self.base = f"http://{host}:{port}"
         self.timeout = timeout
+
+    @property
+    def rpc_base(self) -> str:
+        """Internal RPC URL (port 3030) used by adnet CLI and program execution."""
+        return f"http://{self.host}:3030"
 
     def get_dex_pairs(self) -> Response:
         return _get(f"{self.base}/api/v1/dex/pairs", timeout=self.timeout)
