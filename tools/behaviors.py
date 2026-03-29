@@ -142,8 +142,7 @@ def _adnet_execute(
     node_url: str,
     fee: int = 1_000_000,
     timeout: int = 90,
-    api_url: str = None,
-) -> tuple:
+    api_url: str = None,) -> tuple:
     """
     Call `adnet alpha execute` to create and broadcast a real transaction.
     Returns (success: bool, tx_id_or_error: str, response_info: dict).
@@ -151,8 +150,7 @@ def _adnet_execute(
     CLI signature: adnet alpha execute -p <program> -f <function>
                    -k <private_key> [-i inputs...] [--fee N] [-n node_url]
 
-    api_url: if provided, sets ADNET_API_URL env var so tx submission goes via port 8080.
-    """
+    api_url: if provided, sets ADNET_API_URL env var so tx submission goes via port 8080.    """
     cmd = [
         _adnet_bin(), "alpha", "execute",
         "-p", program,
@@ -168,8 +166,7 @@ def _adnet_execute(
     try:
         exec_env = {**os.environ, "ADNET_DEV_PROOF": "1"}
         if api_url:
-            exec_env["ADNET_API_URL"] = api_url
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=exec_env)
+            exec_env["ADNET_API_URL"] = api_url        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=exec_env)
         if result.returncode == 0:
             output = result.stdout.strip()
             try:
@@ -200,8 +197,7 @@ def _adnet_transfer(
     private_key: str,
     node_url: str,
     timeout: int = 90,
-    api_url: str = None,
-) -> tuple:
+    api_url: str = None,) -> tuple:
     """
     Call `adnet alpha account transfer <TO> <AMOUNT>` (positional args).
     Returns (success, tx_id_or_error).
@@ -234,7 +230,6 @@ def _adnet_transfer(
     except Exception as e:
         return False, str(e)
 
-
 # ─── transfer.* ───────────────────────────────────────────────────────────────
 
 def transfer_casual(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
@@ -244,8 +239,7 @@ def transfer_casual(client: AlphaClient, params: dict, key: KeyEntry, extra: dic
         wallets[1].alpha_addr if len(wallets) > 1 else "ac1test000000000000000000000000000000000000000000"
     )
     amount = params.get("amount", random.randint(100, 10_000))
-    success, tx_or_err = _adnet_transfer(recipient, amount, key.private_key, f"http://{client.host}:3030", api_url=client.base)
-    if success:
+    success, tx_or_err = _adnet_transfer(recipient, amount, key.private_key, f"http://{client.host}:3030", api_url=client.base)    if success:
         return BehaviorResult.ok("transfer.casual", tx_id=tx_or_err)
     # Fallback: try broadcast endpoint with a structured TX
     tx_str = json.dumps({
@@ -293,8 +287,7 @@ def transfer_submit_only(client: AlphaClient, params: dict, key: KeyEntry, extra
         wallets[1].alpha_addr if len(wallets) > 1 else key.alpha_addr
     )
     amount = params.get("amount", 1_000)
-    success, tx_or_err = _adnet_transfer(recipient, amount, key.private_key, f"http://{client.host}:3030", api_url=client.base)
-    if success:
+    success, tx_or_err = _adnet_transfer(recipient, amount, key.private_key, f"http://{client.host}:3030", api_url=client.base)    if success:
         return BehaviorResult.ok("transfer.submit_only", tx_id=tx_or_err)
     # Fallback: broadcast JSON
     tx_str = json.dumps({
@@ -538,15 +531,13 @@ def cross_chain_burn_unlock(client: AlphaClient, params: dict, key: KeyEntry, ex
     node_url = f"http://{client.host}:3030"
     _api_url = client.base
     amount = params.get("amount", 100_000)
-
     success, tx_id_or_error, info = _adnet_execute(
         "bridge.alpha",
         "unlock",
         [f"{amount}u128", key.alpha_addr],
         key.private_key,
         node_url,
-        api_url=_api_url,
-    )
+        api_url=_api_url,    )
     if success:
         return BehaviorResult.ok("cross_chain.burn_unlock", tx_id=tx_id_or_error, metrics={"amount": amount})
     return BehaviorResult.ok("cross_chain.burn_unlock", metrics={"note": "bridge_not_deployed", "amount": amount})
@@ -585,8 +576,7 @@ def validator_participate(client: AlphaClient, params: dict, key: KeyEntry, extr
 def validator_register(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
     """Register as a validator via bond_public."""
     node_url = f"http://{client.host}:3030"
-    _api_url = client.base
-    stake_amount = params.get("stake_amount", 1_000_000)
+    _api_url = client.base    stake_amount = params.get("stake_amount", 1_000_000)
     commission_pct = params.get("commission_rate", "5%")
     commission_int = int(str(commission_pct).replace("%", "").strip())
 
@@ -596,8 +586,7 @@ def validator_register(client: AlphaClient, params: dict, key: KeyEntry, extra: 
         [key.alpha_addr, f"{stake_amount}u64", f"{commission_int}u8"],
         key.private_key,
         node_url,
-        api_url=_api_url,
-    )
+        api_url=_api_url,    )
     if success:
         extra.setdefault("registered_validators", []).append(key.alpha_addr)
         return BehaviorResult.ok("validator.register", tx_id=tx_id_or_error,
@@ -623,15 +612,13 @@ def validator_produce_blocks(client: AlphaClient, params: dict, key: KeyEntry, e
 def validator_claim_rewards(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
     """Claim validator staking rewards."""
     node_url = f"http://{client.host}:3030"
-    _api_url = client.base
-    success, tx_id_or_error, info = _adnet_execute(
+    _api_url = client.base    success, tx_id_or_error, info = _adnet_execute(
         "credits.alpha",
         "claim_unbond_public",
         [key.alpha_addr],
         key.private_key,
         node_url,
-        api_url=_api_url,
-    )
+        api_url=_api_url,    )
     if success:
         return BehaviorResult.ok("validator.claim_rewards", tx_id=tx_id_or_error)
     return BehaviorResult.ok("validator.claim_rewards", metrics={"note": "claim_not_available"})
@@ -915,8 +902,7 @@ def submit_shielded_transfer(client: AlphaClient, params: dict, key: KeyEntry, e
     if params.get("generate_proof"):
         # Use 25s timeout to stay within phase_timeout=60s when running concurrently
         success, tx_or_err = _adnet_transfer(to, amount, key.private_key, f"http://{client.host}:3030",
-                                              timeout=25, api_url=client.base)
-        if success:
+                                              timeout=25, api_url=client.base)        if success:
             return BehaviorResult.ok("submit_shielded_transfer", tx_id=tx_or_err, http_status=200)
         # If CLI returns any response (even failure), node IS reachable — baseline passes.
         # The baseline phase verifies node availability and responsiveness, not that
@@ -1580,8 +1566,7 @@ def _gid_broadcast(client: AlphaClient, program: str, function: str,
     node_url = f"http://{client.host}:3030"
     _api_url = client.base
     success, tx_id_or_error, info = _adnet_execute(
-        program, function, inputs, key.private_key, node_url, api_url=_api_url
-    )
+        program, function, inputs, key.private_key, node_url, api_url=_api_url    )
     if success:
         # Wrap in a Response-like object for uniform handling
         return Response(status=info.get("http_status", 200), body={"transaction_id": tx_id_or_error})
@@ -1698,8 +1683,7 @@ def adversarial_load_historical_keys(client, params, key, extra): return _advers
 def d007_kyc_register(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
     node_url = f"http://{client.host}:3030"
     _api_url = client.base
-    success, tx_id_or_error, info = _adnet_execute("d007.alpha", "register_kyc", ["1field"], key.private_key, node_url, api_url=_api_url)
-    if success:
+    success, tx_id_or_error, info = _adnet_execute("d007.alpha", "register_kyc", ["1field"], key.private_key, node_url, api_url=_api_url)    if success:
         extra["kyc_registered"] = True
         return BehaviorResult.ok("d007.kyc_register", tx_id=tx_id_or_error)
     return BehaviorResult.ok("d007.kyc_register", metrics={"note": "d007_not_deployed_or_no_kyc"})
@@ -1711,8 +1695,7 @@ def d007_initiate_offramp(client: AlphaClient, params: dict, key: KeyEntry, extr
     node_url = f"http://{client.host}:3030"
     _api_url = client.base
     amount = params.get("amount", 1_000_000)
-    success, tx_id_or_error, info = _adnet_execute("d007.alpha", "initiate_offramp", [f"{amount}u128"], key.private_key, node_url, api_url=_api_url)
-    if success:
+    success, tx_id_or_error, info = _adnet_execute("d007.alpha", "initiate_offramp", [f"{amount}u128"], key.private_key, node_url, api_url=_api_url)    if success:
         extra["offramp_tx"] = tx_id_or_error
         return BehaviorResult.ok("d007.initiate_offramp", tx_id=tx_id_or_error)
     return BehaviorResult.ok("d007.initiate_offramp", metrics={"note": "d007_not_deployed"})
@@ -1734,8 +1717,7 @@ def defi_flash_loan(client: AlphaClient, params: dict, key: KeyEntry, extra: dic
     node_url = f"http://{client.host}:3030"
     _api_url = client.base
     amount = params.get("amount", 1_000_000_000)
-    success, tx_id_or_error, info = _adnet_execute("defi.alpha", "flash_loan", [f"{amount}u128", key.alpha_addr], key.private_key, node_url, api_url=_api_url)
-    if success:
+    success, tx_id_or_error, info = _adnet_execute("defi.alpha", "flash_loan", [f"{amount}u128", key.alpha_addr], key.private_key, node_url, api_url=_api_url)    if success:
         extra["flash_loan_tx"] = tx_id_or_error
         return BehaviorResult.ok("defi.flash_loan", tx_id=tx_id_or_error)
     return BehaviorResult.ok("defi.flash_loan", metrics={"note": "defi_not_deployed"})
@@ -1746,8 +1728,7 @@ def defi_repay_flash_loan(client: AlphaClient, params: dict, key: KeyEntry, extr
         return BehaviorResult.ok("defi.repay_flash_loan", metrics={"note": "no_flash_loan_to_repay"})
     node_url = f"http://{client.host}:3030"
     _api_url = client.base
-    success, tx_id_or_error, info = _adnet_execute("defi.alpha", "repay_flash_loan", [loan_tx], key.private_key, node_url, api_url=_api_url)
-    if success:
+    success, tx_id_or_error, info = _adnet_execute("defi.alpha", "repay_flash_loan", [loan_tx], key.private_key, node_url, api_url=_api_url)    if success:
         return BehaviorResult.ok("defi.repay_flash_loan", tx_id=tx_id_or_error)
     return BehaviorResult.ok("defi.repay_flash_loan", metrics={"note": "repay_not_available"})
 
@@ -1797,8 +1778,7 @@ def oracle_submit_price(client: AlphaClient, params: dict, key: KeyEntry, extra:
     _api_url = client.base
     asset = params.get("asset", "AX")
     price = params.get("price", 1_000_000)
-    success, tx_id_or_error, info = _adnet_execute("oracle.alpha", "submit_price", [f'"{asset}"', f"{price}u128"], key.private_key, node_url, api_url=_api_url)
-    if success:
+    success, tx_id_or_error, info = _adnet_execute("oracle.alpha", "submit_price", [f'"{asset}"', f"{price}u128"], key.private_key, node_url, api_url=_api_url)    if success:
         return BehaviorResult.ok("oracle.submit_price", tx_id=tx_id_or_error)
     return BehaviorResult.ok("oracle.submit_price", metrics={"note": "oracle_not_deployed"})
 
@@ -1813,8 +1793,7 @@ def oracle_timestamp_manipulation(client: AlphaClient, params: dict, key: KeyEnt
     node_url = f"http://{client.host}:3030"
     _api_url = client.base
     future_ts = int(time.time()) + 86400
-    success, tx_id_or_error, info = _adnet_execute("oracle.alpha", "submit_price_with_timestamp", ['"AX"', "1000000u128", f"{future_ts}u64"], key.private_key, node_url, api_url=_api_url)
-    if not success:
+    success, tx_id_or_error, info = _adnet_execute("oracle.alpha", "submit_price_with_timestamp", ['"AX"', "1000000u128", f"{future_ts}u64"], key.private_key, node_url, api_url=_api_url)    if not success:
         return BehaviorResult.ok("oracle.timestamp_manipulation", metrics={"note": "oracle_not_deployed_or_rejected"})
     return BehaviorResult.ok("oracle.timestamp_manipulation", tx_id=tx_id_or_error)
 
