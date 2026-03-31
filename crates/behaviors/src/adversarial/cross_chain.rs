@@ -13,29 +13,42 @@ pub struct DoubleSpendAttack {
 
 impl DoubleSpendAttack {
     pub async fn execute(&self, context: &BotContext) -> Result<BehaviorResult> {
-        tracing::warn!("ATTACK: Double-spend via unlock_id reuse: {}", self.unlock_id);
+        tracing::warn!(
+            "ATTACK: Double-spend via unlock_id reuse: {}",
+            self.unlock_id
+        );
         let client = AdnetClient::new(context.execution.network.adnet_unified.clone())?;
         // Step 1: Lock AX on Alpha
-        let _ = client.submit_private_transaction(&json!({
-            "type": "bridge_lock",
-            "amount": self.amount,
-            "unlock_id": &self.unlock_id,
-        })).await;
+        let _ = client
+            .submit_private_transaction(&json!({
+                "type": "bridge_lock",
+                "amount": self.amount,
+                "unlock_id": &self.unlock_id,
+            }))
+            .await;
         // Step 2: Attempt to mint twice with same unlock_id
-        let _ = client.submit_public_transaction(&json!({
-            "type": "mint_sax",
-            "unlock_id": &self.unlock_id,
-            "attempt": 1,
-        })).await;
-        let second = client.submit_public_transaction(&json!({
-            "type": "mint_sax",
-            "unlock_id": &self.unlock_id,
-            "attempt": 2,
-        })).await;
+        let _ = client
+            .submit_public_transaction(&json!({
+                "type": "mint_sax",
+                "unlock_id": &self.unlock_id,
+                "attempt": 1,
+            }))
+            .await;
+        let second = client
+            .submit_public_transaction(&json!({
+                "type": "mint_sax",
+                "unlock_id": &self.unlock_id,
+                "attempt": 2,
+            }))
+            .await;
         // Expected: second mint rejected — unlock_id already consumed
         match second {
-            Err(_) => Ok(BehaviorResult::error("double-spend rejected: unlock_id already used")),
-            Ok(_) => Ok(BehaviorResult::success("WARNING: double-spend accepted — security regression!")),
+            Err(_) => Ok(BehaviorResult::error(
+                "double-spend rejected: unlock_id already used",
+            )),
+            Ok(_) => Ok(BehaviorResult::success(
+                "WARNING: double-spend accepted — security regression!",
+            )),
         }
     }
 }
@@ -49,15 +62,25 @@ pub struct BridgeMismatchAttack {
 
 impl BridgeMismatchAttack {
     pub async fn execute(&self, context: &BotContext) -> Result<BehaviorResult> {
-        tracing::warn!("ATTACK: Bridge mismatch — lock {} != mint {}", self.lock_amount, self.mint_amount);
+        tracing::warn!(
+            "ATTACK: Bridge mismatch — lock {} != mint {}",
+            self.lock_amount,
+            self.mint_amount
+        );
         let client = AdnetClient::new(context.execution.network.adnet_unified.clone())?;
-        let _ = client.submit_private_transaction(&json!({
-            "type": "bridge_lock", "amount": self.lock_amount,
-        })).await;
-        let _ = client.submit_public_transaction(&json!({
-            "type": "mint_sax", "amount": self.mint_amount,  // Mismatched!
-        })).await;
-        Ok(BehaviorResult::error("bridge mismatch detected — bridge auto-shutdown triggered"))
+        let _ = client
+            .submit_private_transaction(&json!({
+                "type": "bridge_lock", "amount": self.lock_amount,
+            }))
+            .await;
+        let _ = client
+            .submit_public_transaction(&json!({
+                "type": "mint_sax", "amount": self.mint_amount,  // Mismatched!
+            }))
+            .await;
+        Ok(BehaviorResult::error(
+            "bridge mismatch detected — bridge auto-shutdown triggered",
+        ))
     }
 }
 
@@ -71,13 +94,19 @@ impl ReplayAttack {
     pub async fn execute(&self, context: &BotContext) -> Result<BehaviorResult> {
         tracing::warn!("ATTACK: Replay tx {}", self.original_tx_id);
         let client = AdnetClient::new(context.execution.network.adnet_unified.clone())?;
-        let result = client.submit_private_transaction(&json!({
-            "type": "replay",
-            "original_tx_id": &self.original_tx_id,
-        })).await;
+        let result = client
+            .submit_private_transaction(&json!({
+                "type": "replay",
+                "original_tx_id": &self.original_tx_id,
+            }))
+            .await;
         match result {
-            Err(_) => Ok(BehaviorResult::error("replay rejected — nullifier already consumed")),
-            Ok(_) => Ok(BehaviorResult::success("WARNING: replay accepted — nullifier missing!")),
+            Err(_) => Ok(BehaviorResult::error(
+                "replay rejected — nullifier already consumed",
+            )),
+            Ok(_) => Ok(BehaviorResult::success(
+                "WARNING: replay accepted — nullifier missing!",
+            )),
         }
     }
 }

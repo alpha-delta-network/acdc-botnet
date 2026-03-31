@@ -17,9 +17,14 @@ impl MempoolFlood {
         let mut accepted = 0usize;
         let mut rejected = 0usize;
         for i in 0..self.tx_count {
-            match client.submit_public_transaction(&json!({"type":"spam_tx","seq":i})).await {
+            match client
+                .submit_public_transaction(&json!({"type":"spam_tx","seq":i}))
+                .await
+            {
                 Ok(_) => accepted += 1,
-                Err(_) => { rejected += 1; }
+                Err(_) => {
+                    rejected += 1;
+                }
             }
         }
         // Expected: rate limiting kicks in, block production not stalled
@@ -37,16 +42,25 @@ pub struct StorageExhaustion {
 
 impl StorageExhaustion {
     pub async fn execute(&self, context: &BotContext) -> Result<BehaviorResult> {
-        tracing::warn!("ATTACK: Storage exhaustion — {} byte payload", self.payload_size_bytes);
+        tracing::warn!(
+            "ATTACK: Storage exhaustion — {} byte payload",
+            self.payload_size_bytes
+        );
         let client = AdnetClient::new(context.execution.network.adnet_unified.clone())?;
         let large_payload: String = "x".repeat(self.payload_size_bytes.min(65536));
-        let result = client.submit_public_transaction(&json!({
-            "type": "large_payload",
-            "data": large_payload,
-        })).await;
+        let result = client
+            .submit_public_transaction(&json!({
+                "type": "large_payload",
+                "data": large_payload,
+            }))
+            .await;
         match result {
-            Err(_) => Ok(BehaviorResult::error("oversized transaction rejected — size limit enforced")),
-            Ok(_) => Ok(BehaviorResult::success("WARNING: oversized tx accepted — size limit missing!")),
+            Err(_) => Ok(BehaviorResult::error(
+                "oversized transaction rejected — size limit enforced",
+            )),
+            Ok(_) => Ok(BehaviorResult::success(
+                "WARNING: oversized tx accepted — size limit missing!",
+            )),
         }
     }
 }

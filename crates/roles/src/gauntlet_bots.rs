@@ -21,7 +21,12 @@ pub struct UserTransactorBot {
 }
 
 impl UserTransactorBot {
-    pub fn new(id: String) -> Self { Self { id, adnet_url: String::new() } }
+    pub fn new(id: String) -> Self {
+        Self {
+            id,
+            adnet_url: String::new(),
+        }
+    }
 }
 
 #[async_trait]
@@ -34,23 +39,44 @@ impl Bot for UserTransactorBot {
         let client = AdnetClient::new(self.adnet_url.clone())?;
         match behavior_id {
             "transfer.ax_private" => {
-                let resp = client.submit_private_transaction(&json!({"type":"ax_transfer","amount":1000})).await?;
-                Ok(BehaviorResult::success(format!("private tx: {:?}", resp.get("tx_id"))))
+                let resp = client
+                    .submit_private_transaction(&json!({"type":"ax_transfer","amount":1000}))
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "private tx: {:?}",
+                    resp.get("tx_id")
+                )))
             }
             "transfer.ax_public" => {
-                let resp = client.submit_public_transaction(&json!({"type":"ax_transfer","amount":1000})).await?;
-                Ok(BehaviorResult::success(format!("public tx: {:?}", resp.get("tx_id"))))
+                let resp = client
+                    .submit_public_transaction(&json!({"type":"ax_transfer","amount":1000}))
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "public tx: {:?}",
+                    resp.get("tx_id")
+                )))
             }
             "query.balance" => {
                 let root = client.get_state_root().await?;
-                Ok(BehaviorResult::success(format!("state root: {:?}", root.root)))
+                Ok(BehaviorResult::success(format!(
+                    "state root: {:?}",
+                    root.root
+                )))
             }
-            _ => Err(BotError::NetworkError(format!("UserTransactor: unknown behavior {behavior_id}")))
+            _ => Err(BotError::NetworkError(format!(
+                "UserTransactor: unknown behavior {behavior_id}"
+            ))),
         }
     }
-    async fn teardown(&mut self) -> Result<()> { Ok(()) }
-    fn id(&self) -> &str { &self.id }
-    fn role(&self) -> &str { "user_transactor" }
+    async fn teardown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn role(&self) -> &str {
+        "user_transactor"
+    }
 }
 
 // =============================================================================
@@ -64,7 +90,13 @@ pub struct GauntletGovernorBot {
 }
 
 impl GauntletGovernorBot {
-    pub fn new(id: String) -> Self { Self { id, adnet_url: String::new(), multisig_threshold: 3 } }
+    pub fn new(id: String) -> Self {
+        Self {
+            id,
+            adnet_url: String::new(),
+            multisig_threshold: 3,
+        }
+    }
 }
 
 #[async_trait]
@@ -77,8 +109,14 @@ impl Bot for GauntletGovernorBot {
         let client = AdnetClient::new(self.adnet_url.clone())?;
         match behavior_id {
             "governance.propose.parameter" => {
-                let pid = client.submit_governance_proposal(&json!({"type":"parameter_update","parameter":"fee_rate","new_value":100})).await?;
-                Ok(BehaviorResult::success(format!("parameter proposal #{pid}")))
+                let pid = client
+                    .submit_governance_proposal(
+                        &json!({"type":"parameter_update","parameter":"fee_rate","new_value":100}),
+                    )
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "parameter proposal #{pid}"
+                )))
             }
             "governance.propose.mint" => {
                 let pid = client.submit_governance_proposal(&json!({"type":"mint_ax","recipient":"ax1test000","amount_microcredits":1000000})).await?;
@@ -90,11 +128,15 @@ impl Bot for GauntletGovernorBot {
                 let mut voted = 0usize;
                 for p in &proposals {
                     if let Some(id) = p.get("id").and_then(|v| v.as_u64()) {
-                        client.submit_governance_vote(id, &json!({"vote":"yes"})).await?;
+                        client
+                            .submit_governance_vote(id, &json!({"vote":"yes"}))
+                            .await?;
                         voted += 1;
                     }
                 }
-                Ok(BehaviorResult::success(format!("voted on {voted} proposals")))
+                Ok(BehaviorResult::success(format!(
+                    "voted on {voted} proposals"
+                )))
             }
             "governance.execute" => {
                 let resp = client.get_governance_proposals().await?;
@@ -103,27 +145,48 @@ impl Bot for GauntletGovernorBot {
                 for p in &proposals {
                     if p.get("status").and_then(|v| v.as_str()) == Some("passed") {
                         if let Some(id) = p.get("id").and_then(|v| v.as_u64()) {
-                            client.submit_public_transaction(&json!({"type":"execute_proposal","proposal_id":id})).await?;
+                            client
+                                .submit_public_transaction(
+                                    &json!({"type":"execute_proposal","proposal_id":id}),
+                                )
+                                .await?;
                             executed += 1;
                         }
                     }
                 }
-                Ok(BehaviorResult::success(format!("executed {executed} passed proposals")))
+                Ok(BehaviorResult::success(format!(
+                    "executed {executed} passed proposals"
+                )))
             }
             "governance.grim_trigger" => {
                 let status = client.get_grim_trigger_status(&self.id).await?;
-                Ok(BehaviorResult::success(format!("grim trigger status: {:?}", status.get("state"))))
+                Ok(BehaviorResult::success(format!(
+                    "grim trigger status: {:?}",
+                    status.get("state")
+                )))
             }
             "governance.apology" => {
-                let pid = client.submit_governance_proposal(&json!({"type":"apology_restore","crippled_gid":&self.id})).await?;
+                let pid = client
+                    .submit_governance_proposal(
+                        &json!({"type":"apology_restore","crippled_gid":&self.id}),
+                    )
+                    .await?;
                 Ok(BehaviorResult::success(format!("apology proposal #{pid}")))
             }
-            _ => Err(BotError::NetworkError(format!("GauntletGovernor: unknown behavior {behavior_id}")))
+            _ => Err(BotError::NetworkError(format!(
+                "GauntletGovernor: unknown behavior {behavior_id}"
+            ))),
         }
     }
-    async fn teardown(&mut self) -> Result<()> { Ok(()) }
-    fn id(&self) -> &str { &self.id }
-    fn role(&self) -> &str { "gauntlet_governor" }
+    async fn teardown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn role(&self) -> &str {
+        "gauntlet_governor"
+    }
 }
 
 // =============================================================================
@@ -136,7 +199,12 @@ pub struct DeltaVoterBot {
 }
 
 impl DeltaVoterBot {
-    pub fn new(id: String) -> Self { Self { id, adnet_url: String::new() } }
+    pub fn new(id: String) -> Self {
+        Self {
+            id,
+            adnet_url: String::new(),
+        }
+    }
 }
 
 #[async_trait]
@@ -149,23 +217,43 @@ impl Bot for DeltaVoterBot {
         let client = AdnetClient::new(self.adnet_url.clone())?;
         match behavior_id {
             "governance.delta.vote" => {
-                client.submit_governance_vote(1, &json!({"vote":"yes","chain":"delta"})).await?;
+                client
+                    .submit_governance_vote(1, &json!({"vote":"yes","chain":"delta"}))
+                    .await?;
                 Ok(BehaviorResult::success("delta vote cast"))
             }
             "governance.delta.emphatic_vote" => {
-                client.submit_governance_vote(1, &json!({"vote":"yes","emphatic":true,"dx_amount":100000000})).await?;
-                Ok(BehaviorResult::success("emphatic vote: 100 DX/slot, 50 per side"))
+                client
+                    .submit_governance_vote(
+                        1,
+                        &json!({"vote":"yes","emphatic":true,"dx_amount":100000000}),
+                    )
+                    .await?;
+                Ok(BehaviorResult::success(
+                    "emphatic vote: 100 DX/slot, 50 per side",
+                ))
             }
             "governance.delta.auto_disenroll" => {
                 let resp = client.get_governance_proposals().await?;
-                Ok(BehaviorResult::success(format!("disenroll check: {} proposals", resp.proposals.unwrap_or_default().len())))
+                Ok(BehaviorResult::success(format!(
+                    "disenroll check: {} proposals",
+                    resp.proposals.unwrap_or_default().len()
+                )))
             }
-            _ => Err(BotError::NetworkError(format!("DeltaVoter: unknown behavior {behavior_id}")))
+            _ => Err(BotError::NetworkError(format!(
+                "DeltaVoter: unknown behavior {behavior_id}"
+            ))),
         }
     }
-    async fn teardown(&mut self) -> Result<()> { Ok(()) }
-    fn id(&self) -> &str { &self.id }
-    fn role(&self) -> &str { "delta_voter" }
+    async fn teardown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn role(&self) -> &str {
+        "delta_voter"
+    }
 }
 
 // =============================================================================
@@ -180,7 +268,11 @@ pub struct ValidatorBot {
 
 impl ValidatorBot {
     pub fn new(id: String, is_shadow: bool) -> Self {
-        Self { id, adnet_url: String::new(), is_shadow }
+        Self {
+            id,
+            adnet_url: String::new(),
+            is_shadow,
+        }
     }
 }
 
@@ -194,27 +286,62 @@ impl Bot for ValidatorBot {
         let client = AdnetClient::new(self.adnet_url.clone())?;
         match behavior_id {
             "validator.register" => {
-                let resp = client.register_prover(&json!({"type":"validator","id":self.id,"is_shadow":self.is_shadow})).await?;
-                Ok(BehaviorResult::success(format!("validator registered: {:?}", resp.get("status"))))
+                let resp = client
+                    .register_prover(
+                        &json!({"type":"validator","id":self.id,"is_shadow":self.is_shadow}),
+                    )
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "validator registered: {:?}",
+                    resp.get("status")
+                )))
             }
             "validator.produce_block" | "validator.attest" => {
                 let root = client.get_state_root().await?;
-                Ok(BehaviorResult::success(format!("block at height (attested)")))
+                Ok(BehaviorResult::success(format!(
+                    "block at height (attested)"
+                )))
             }
             "validator.claim_rewards" => {
-                let resp = client.submit_public_transaction(&json!({"type":"claim_validator_rewards","validator_id":&self.id})).await?;
-                Ok(BehaviorResult::success(format!("rewards claimed: {:?}", resp.get("amount"))))
+                let resp = client
+                    .submit_public_transaction(
+                        &json!({"type":"claim_validator_rewards","validator_id":&self.id}),
+                    )
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "rewards claimed: {:?}",
+                    resp.get("amount")
+                )))
             }
             "validator.resign" => {
-                let resp = client.submit_public_transaction(&json!({"type":"validator_resign","validator_id":&self.id})).await?;
-                Ok(BehaviorResult::success(format!("resigned: {:?}", resp.get("status"))))
+                let resp = client
+                    .submit_public_transaction(
+                        &json!({"type":"validator_resign","validator_id":&self.id}),
+                    )
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "resigned: {:?}",
+                    resp.get("status")
+                )))
             }
-            _ => Err(BotError::NetworkError(format!("Validator: unknown behavior {behavior_id}")))
+            _ => Err(BotError::NetworkError(format!(
+                "Validator: unknown behavior {behavior_id}"
+            ))),
         }
     }
-    async fn teardown(&mut self) -> Result<()> { Ok(()) }
-    fn id(&self) -> &str { &self.id }
-    fn role(&self) -> &str { if self.is_shadow { "shadow_validator" } else { "active_validator" } }
+    async fn teardown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn role(&self) -> &str {
+        if self.is_shadow {
+            "shadow_validator"
+        } else {
+            "active_validator"
+        }
+    }
 }
 
 // =============================================================================
@@ -227,7 +354,12 @@ pub struct ProverBot {
 }
 
 impl ProverBot {
-    pub fn new(id: String) -> Self { Self { id, adnet_url: String::new() } }
+    pub fn new(id: String) -> Self {
+        Self {
+            id,
+            adnet_url: String::new(),
+        }
+    }
 }
 
 #[async_trait]
@@ -240,23 +372,46 @@ impl Bot for ProverBot {
         let client = AdnetClient::new(self.adnet_url.clone())?;
         match behavior_id {
             "prover.register" => {
-                let resp = client.register_prover(&json!({"type":"prover","id":&self.id,"gpu":true})).await?;
-                Ok(BehaviorResult::success(format!("prover registered: {:?}", resp.get("status"))))
+                let resp = client
+                    .register_prover(&json!({"type":"prover","id":&self.id,"gpu":true}))
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "prover registered: {:?}",
+                    resp.get("status")
+                )))
             }
             "prover.submit_proof" => {
                 let status = client.get_pool_status().await?;
-                Ok(BehaviorResult::success(format!("pool status: {:?}", status.get("queue_depth"))))
+                Ok(BehaviorResult::success(format!(
+                    "pool status: {:?}",
+                    status.get("queue_depth")
+                )))
             }
             "prover.claim_rewards" => {
-                let resp = client.submit_public_transaction(&json!({"type":"claim_prover_rewards","prover_id":&self.id})).await?;
-                Ok(BehaviorResult::success(format!("prover rewards: {:?}", resp.get("amount"))))
+                let resp = client
+                    .submit_public_transaction(
+                        &json!({"type":"claim_prover_rewards","prover_id":&self.id}),
+                    )
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "prover rewards: {:?}",
+                    resp.get("amount")
+                )))
             }
-            _ => Err(BotError::NetworkError(format!("Prover: unknown behavior {behavior_id}")))
+            _ => Err(BotError::NetworkError(format!(
+                "Prover: unknown behavior {behavior_id}"
+            ))),
         }
     }
-    async fn teardown(&mut self) -> Result<()> { Ok(()) }
-    fn id(&self) -> &str { &self.id }
-    fn role(&self) -> &str { "prover" }
+    async fn teardown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn role(&self) -> &str {
+        "prover"
+    }
 }
 
 // =============================================================================
@@ -269,7 +424,12 @@ pub struct TechRepBot {
 }
 
 impl TechRepBot {
-    pub fn new(id: String) -> Self { Self { id, adnet_url: String::new() } }
+    pub fn new(id: String) -> Self {
+        Self {
+            id,
+            adnet_url: String::new(),
+        }
+    }
 }
 
 #[async_trait]
@@ -282,23 +442,41 @@ impl Bot for TechRepBot {
         let client = AdnetClient::new(self.adnet_url.clone())?;
         match behavior_id {
             "techrep.register" => {
-                let resp = client.submit_public_transaction(&json!({"type":"register_techrep","id":&self.id})).await?;
-                Ok(BehaviorResult::success(format!("techrep registered: {:?}", resp.get("status"))))
+                let resp = client
+                    .submit_public_transaction(&json!({"type":"register_techrep","id":&self.id}))
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "techrep registered: {:?}",
+                    resp.get("status")
+                )))
             }
             "techrep.vote_forge" => {
-                client.submit_governance_vote(1, &json!({"vote":"approve","type":"forge_pr","techrep_id":&self.id})).await?;
+                client
+                    .submit_governance_vote(
+                        1,
+                        &json!({"vote":"approve","type":"forge_pr","techrep_id":&self.id}),
+                    )
+                    .await?;
                 Ok(BehaviorResult::success("forge PR vote cast"))
             }
             "techrep.staged_deploy" => {
                 let root = client.get_state_root().await?;
                 Ok(BehaviorResult::success("staged deployment verified"))
             }
-            _ => Err(BotError::NetworkError(format!("TechRep: unknown behavior {behavior_id}")))
+            _ => Err(BotError::NetworkError(format!(
+                "TechRep: unknown behavior {behavior_id}"
+            ))),
         }
     }
-    async fn teardown(&mut self) -> Result<()> { Ok(()) }
-    fn id(&self) -> &str { &self.id }
-    fn role(&self) -> &str { "tech_rep" }
+    async fn teardown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn role(&self) -> &str {
+        "tech_rep"
+    }
 }
 
 // =============================================================================
@@ -312,8 +490,16 @@ pub struct EarnInBot {
 }
 
 impl EarnInBot {
-    pub fn new(id: String, index: usize) -> Self { Self { id, adnet_url: String::new(), index } }
-    pub fn expects_success(&self) -> bool { self.index < 8 }
+    pub fn new(id: String, index: usize) -> Self {
+        Self {
+            id,
+            adnet_url: String::new(),
+            index,
+        }
+    }
+    pub fn expects_success(&self) -> bool {
+        self.index < 8
+    }
 }
 
 #[async_trait]
@@ -326,30 +512,56 @@ impl Bot for EarnInBot {
         let client = AdnetClient::new(self.adnet_url.clone())?;
         match behavior_id {
             "earnin.apply" => {
-                let resp = client.submit_public_transaction(&json!({"type":"earn_in_apply","bot_id":&self.id})).await?;
-                Ok(BehaviorResult::success(format!("earn-in applied: {:?}", resp.get("application_id"))))
+                let resp = client
+                    .submit_public_transaction(&json!({"type":"earn_in_apply","bot_id":&self.id}))
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "earn-in applied: {:?}",
+                    resp.get("application_id")
+                )))
             }
             "earnin.query_status" => {
                 let status = client.get_pool_status().await?;
-                Ok(BehaviorResult::success(format!("earn-in status: {:?}", status.get("earn_in_queue"))))
+                Ok(BehaviorResult::success(format!(
+                    "earn-in status: {:?}",
+                    status.get("earn_in_queue")
+                )))
             }
             "earnin.complete" => {
                 if self.expects_success() {
-                    let resp = client.submit_public_transaction(&json!({"type":"earn_in_complete","bot_id":&self.id})).await?;
-                    Ok(BehaviorResult::success(format!("earn-in complete: {:?}", resp.get("status"))))
+                    let resp = client
+                        .submit_public_transaction(
+                            &json!({"type":"earn_in_complete","bot_id":&self.id}),
+                        )
+                        .await?;
+                    Ok(BehaviorResult::success(format!(
+                        "earn-in complete: {:?}",
+                        resp.get("status")
+                    )))
                 } else {
-                    Ok(BehaviorResult::error("earn-in failed as expected (index >= 8 in full / >= 3 in light)"))
+                    Ok(BehaviorResult::error(
+                        "earn-in failed as expected (index >= 8 in full / >= 3 in light)",
+                    ))
                 }
             }
-            "earnin.fail" => {
-                Ok(BehaviorResult::error(format!("earn-in bot {}: expected failure", self.id)))
-            }
-            _ => Err(BotError::NetworkError(format!("EarnIn: unknown behavior {behavior_id}")))
+            "earnin.fail" => Ok(BehaviorResult::error(format!(
+                "earn-in bot {}: expected failure",
+                self.id
+            ))),
+            _ => Err(BotError::NetworkError(format!(
+                "EarnIn: unknown behavior {behavior_id}"
+            ))),
         }
     }
-    async fn teardown(&mut self) -> Result<()> { Ok(()) }
-    fn id(&self) -> &str { &self.id }
-    fn role(&self) -> &str { "earn_in" }
+    async fn teardown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn role(&self) -> &str {
+        "earn_in"
+    }
 }
 
 // =============================================================================
@@ -362,7 +574,12 @@ pub struct AtomicSwapBot {
 }
 
 impl AtomicSwapBot {
-    pub fn new(id: String) -> Self { Self { id, adnet_url: String::new() } }
+    pub fn new(id: String) -> Self {
+        Self {
+            id,
+            adnet_url: String::new(),
+        }
+    }
 }
 
 #[async_trait]
@@ -375,27 +592,59 @@ impl Bot for AtomicSwapBot {
         let client = AdnetClient::new(self.adnet_url.clone())?;
         match behavior_id {
             "atomicswap.kyt_register" => {
-                let resp = client.submit_public_transaction(&json!({"type":"kyt_register","id":&self.id})).await?;
-                Ok(BehaviorResult::success(format!("KYT registered: {:?}", resp.get("status"))))
+                let resp = client
+                    .submit_public_transaction(&json!({"type":"kyt_register","id":&self.id}))
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "KYT registered: {:?}",
+                    resp.get("status")
+                )))
             }
             "atomicswap.htlc_initiate" => {
-                let resp = client.submit_public_transaction(&json!({"type":"htlc_initiate","swap_id":&self.id,"timelock_blocks":100})).await?;
-                Ok(BehaviorResult::success(format!("HTLC initiated: {:?}", resp.get("htlc_id"))))
+                let resp = client
+                    .submit_public_transaction(
+                        &json!({"type":"htlc_initiate","swap_id":&self.id,"timelock_blocks":100}),
+                    )
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "HTLC initiated: {:?}",
+                    resp.get("htlc_id")
+                )))
             }
             "atomicswap.htlc_complete" => {
-                let resp = client.submit_public_transaction(&json!({"type":"htlc_complete","swap_id":&self.id,"preimage":"deadbeef"})).await?;
-                Ok(BehaviorResult::success(format!("HTLC completed: {:?}", resp.get("status"))))
+                let resp = client
+                    .submit_public_transaction(
+                        &json!({"type":"htlc_complete","swap_id":&self.id,"preimage":"deadbeef"}),
+                    )
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "HTLC completed: {:?}",
+                    resp.get("status")
+                )))
             }
             "atomicswap.htlc_refund" => {
-                let resp = client.submit_public_transaction(&json!({"type":"htlc_refund","swap_id":&self.id})).await?;
-                Ok(BehaviorResult::success(format!("HTLC refunded: {:?}", resp.get("status"))))
+                let resp = client
+                    .submit_public_transaction(&json!({"type":"htlc_refund","swap_id":&self.id}))
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "HTLC refunded: {:?}",
+                    resp.get("status")
+                )))
             }
-            _ => Err(BotError::NetworkError(format!("AtomicSwap: unknown behavior {behavior_id}")))
+            _ => Err(BotError::NetworkError(format!(
+                "AtomicSwap: unknown behavior {behavior_id}"
+            ))),
         }
     }
-    async fn teardown(&mut self) -> Result<()> { Ok(()) }
-    fn id(&self) -> &str { &self.id }
-    fn role(&self) -> &str { "atomic_swap" }
+    async fn teardown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn role(&self) -> &str {
+        "atomic_swap"
+    }
 }
 
 // =============================================================================
@@ -408,7 +657,12 @@ pub struct DeadWalletBot {
 }
 
 impl DeadWalletBot {
-    pub fn new(id: String) -> Self { Self { id, adnet_url: String::new() } }
+    pub fn new(id: String) -> Self {
+        Self {
+            id,
+            adnet_url: String::new(),
+        }
+    }
 }
 
 #[async_trait]
@@ -425,15 +679,30 @@ impl Bot for DeadWalletBot {
                 Ok(BehaviorResult::success("dead wallet check triggered"))
             }
             "deadwallet.liquidate" => {
-                let resp = client.submit_public_transaction(&json!({"type":"liquidate_dead_wallet","wallet_id":&self.id})).await?;
-                Ok(BehaviorResult::success(format!("liquidated: {:?}", resp.get("dx_routed_to_reward_pool"))))
+                let resp = client
+                    .submit_public_transaction(
+                        &json!({"type":"liquidate_dead_wallet","wallet_id":&self.id}),
+                    )
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "liquidated: {:?}",
+                    resp.get("dx_routed_to_reward_pool")
+                )))
             }
-            _ => Err(BotError::NetworkError(format!("DeadWallet: unknown behavior {behavior_id}")))
+            _ => Err(BotError::NetworkError(format!(
+                "DeadWallet: unknown behavior {behavior_id}"
+            ))),
         }
     }
-    async fn teardown(&mut self) -> Result<()> { Ok(()) }
-    fn id(&self) -> &str { &self.id }
-    fn role(&self) -> &str { "dead_wallet" }
+    async fn teardown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn role(&self) -> &str {
+        "dead_wallet"
+    }
 }
 
 // =============================================================================
@@ -460,7 +729,11 @@ pub struct AdversarialBot {
 
 impl AdversarialBot {
     pub fn new(id: String, attack: AdversarialAttack) -> Self {
-        Self { id, adnet_url: String::new(), attack }
+        Self {
+            id,
+            adnet_url: String::new(),
+            attack,
+        }
     }
 }
 
@@ -474,76 +747,132 @@ impl Bot for AdversarialBot {
         let client = AdnetClient::new(self.adnet_url.clone())?;
         // Support both named behavior IDs and generic "attack.execute" (dispatches on self.attack)
         let effective_attack = match behavior_id {
-            "attack.equivocation"        => "equivocation",
-            "attack.invalid_zk"          => "invalid_zk",
+            "attack.equivocation" => "equivocation",
+            "attack.invalid_zk" => "invalid_zk",
             "attack.oracle_manipulation" => "oracle_manipulation",
-            "attack.mempool_dos"         => "mempool_dos",
-            "attack.replay"              => "replay",
-            "attack.mev"                 => "mev",
-            "attack.bridge_mismatch"     => "bridge_mismatch",
-            "attack.double_spend"        => "double_spend",
+            "attack.mempool_dos" => "mempool_dos",
+            "attack.replay" => "replay",
+            "attack.mev" => "mev",
+            "attack.bridge_mismatch" => "bridge_mismatch",
+            "attack.double_spend" => "double_spend",
             "attack.execute" => match &self.attack {
-                AdversarialAttack::Equivocation       => "equivocation",
-                AdversarialAttack::InvalidZkProof     => "invalid_zk",
+                AdversarialAttack::Equivocation => "equivocation",
+                AdversarialAttack::InvalidZkProof => "invalid_zk",
                 AdversarialAttack::OracleManipulation => "oracle_manipulation",
-                AdversarialAttack::MempoolDos         => "mempool_dos",
-                AdversarialAttack::Replay             => "replay",
-                AdversarialAttack::MevExtraction      => "mev",
-                AdversarialAttack::BridgeMismatch     => "bridge_mismatch",
-                AdversarialAttack::DoubleSpend        => "double_spend",
+                AdversarialAttack::MempoolDos => "mempool_dos",
+                AdversarialAttack::Replay => "replay",
+                AdversarialAttack::MevExtraction => "mev",
+                AdversarialAttack::BridgeMismatch => "bridge_mismatch",
+                AdversarialAttack::DoubleSpend => "double_spend",
             },
-            _ => return Err(BotError::NetworkError(format!("Adversarial: unknown behavior {behavior_id}")))
+            _ => {
+                return Err(BotError::NetworkError(format!(
+                    "Adversarial: unknown behavior {behavior_id}"
+                )))
+            }
         };
 
         match effective_attack {
             "equivocation" => {
                 tracing::warn!("ATTACK: Equivocation (double-signing)");
-                let _r = client.submit_private_transaction(&json!({"type":"equivocation","block_height":100,"conflicting":true})).await;
-                Ok(BehaviorResult::error("equivocation detected — validator slashed"))
+                let _r = client
+                    .submit_private_transaction(
+                        &json!({"type":"equivocation","block_height":100,"conflicting":true}),
+                    )
+                    .await;
+                Ok(BehaviorResult::error(
+                    "equivocation detected — validator slashed",
+                ))
             }
             "invalid_zk" => {
                 tracing::warn!("ATTACK: Invalid ZK proof submission");
-                let _r = client.submit_private_transaction(&json!({"type":"invalid_zk_proof","proof":"deadbeef"})).await;
-                Ok(BehaviorResult::error("invalid ZK proof rejected — prover penalized"))
+                let _r = client
+                    .submit_private_transaction(
+                        &json!({"type":"invalid_zk_proof","proof":"deadbeef"}),
+                    )
+                    .await;
+                Ok(BehaviorResult::error(
+                    "invalid ZK proof rejected — prover penalized",
+                ))
             }
             "oracle_manipulation" => {
                 tracing::warn!("ATTACK: Oracle price manipulation (extreme value)");
-                let _r = client.submit_public_transaction(&json!({"type":"oracle_price","pair":"AX/USD","price":999999999})).await;
-                Ok(BehaviorResult::error("oracle outlier rejected by trimmed mean"))
+                let _r = client
+                    .submit_public_transaction(
+                        &json!({"type":"oracle_price","pair":"AX/USD","price":999999999}),
+                    )
+                    .await;
+                Ok(BehaviorResult::error(
+                    "oracle outlier rejected by trimmed mean",
+                ))
             }
             "mempool_dos" => {
                 tracing::warn!("ATTACK: Mempool DoS flood");
                 for i in 0..20u32 {
-                    let _ = client.submit_public_transaction(&json!({"type":"spam_tx","seq":i})).await;
+                    let _ = client
+                        .submit_public_transaction(&json!({"type":"spam_tx","seq":i}))
+                        .await;
                 }
-                Ok(BehaviorResult::success("mempool DoS attempted — rate limiting applied, block production not stalled"))
+                Ok(BehaviorResult::success(
+                    "mempool DoS attempted — rate limiting applied, block production not stalled",
+                ))
             }
             "replay" => {
                 tracing::warn!("ATTACK: Replay attack on Alpha tx");
-                let _r = client.submit_private_transaction(&json!({"type":"replay","original_tx_id":"tx_known_good_000"})).await;
-                Ok(BehaviorResult::error("replay rejected — nullifier already consumed"))
+                let _r = client
+                    .submit_private_transaction(
+                        &json!({"type":"replay","original_tx_id":"tx_known_good_000"}),
+                    )
+                    .await;
+                Ok(BehaviorResult::error(
+                    "replay rejected — nullifier already consumed",
+                ))
             }
             "mev" => {
                 tracing::warn!("ATTACK: MEV extraction on DEX batch");
-                let _r = client.submit_public_transaction(&json!({"type":"front_run","target_tx":"tx_001","expected_profit":100})).await;
-                Ok(BehaviorResult::error("MEV extraction yields zero profit — uniform clearing price"))
+                let _r = client
+                    .submit_public_transaction(
+                        &json!({"type":"front_run","target_tx":"tx_001","expected_profit":100}),
+                    )
+                    .await;
+                Ok(BehaviorResult::error(
+                    "MEV extraction yields zero profit — uniform clearing price",
+                ))
             }
             "bridge_mismatch" => {
                 tracing::warn!("ATTACK: Bridge mismatch injection");
-                let _r = client.submit_public_transaction(&json!({"type":"bridge_lock","amount":1000,"nonce_reuse":true})).await;
-                Ok(BehaviorResult::error("bridge mismatch detected — bridge shutdown"))
+                let _r = client
+                    .submit_public_transaction(
+                        &json!({"type":"bridge_lock","amount":1000,"nonce_reuse":true}),
+                    )
+                    .await;
+                Ok(BehaviorResult::error(
+                    "bridge mismatch detected — bridge shutdown",
+                ))
             }
             "double_spend" => {
                 tracing::warn!("ATTACK: Double-spend on Alpha UTXO");
-                let _r = client.submit_private_transaction(&json!({"type":"double_spend","utxo_id":"utxo_001"})).await;
-                Ok(BehaviorResult::error("double-spend rejected — ZK circuit rejects reused UTXO"))
+                let _r = client
+                    .submit_private_transaction(
+                        &json!({"type":"double_spend","utxo_id":"utxo_001"}),
+                    )
+                    .await;
+                Ok(BehaviorResult::error(
+                    "double-spend rejected — ZK circuit rejects reused UTXO",
+                ))
             }
-            _ => unreachable!("effective_attack dispatch is exhaustive")
+            _ => unreachable!("effective_attack dispatch is exhaustive"),
         }
     }
-    async fn teardown(&mut self) -> Result<()> { Ok(()) }
-    fn id(&self) -> &str { &self.id }
-    fn role(&self) -> &str { "adversarial" }
+    async fn teardown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn role(&self) -> &str {
+        "adversarial"
+    }
 }
 
 // =============================================================================
@@ -556,7 +885,12 @@ pub struct OracleBot {
 }
 
 impl OracleBot {
-    pub fn new(id: String) -> Self { Self { id, adnet_url: String::new() } }
+    pub fn new(id: String) -> Self {
+        Self {
+            id,
+            adnet_url: String::new(),
+        }
+    }
 }
 
 #[async_trait]
@@ -569,24 +903,40 @@ impl Bot for OracleBot {
         let client = AdnetClient::new(self.adnet_url.clone())?;
         match behavior_id {
             "oracle.submit_prices" => {
-                let fx_pairs = ["EUR/USD","GBP/USD","JPY/USD","CHF/USD","AUD/USD",
-                                "CAD/USD","CNY/USD","HKD/USD","SGD/USD","NZD/USD"];
+                let fx_pairs = [
+                    "EUR/USD", "GBP/USD", "JPY/USD", "CHF/USD", "AUD/USD", "CAD/USD", "CNY/USD",
+                    "HKD/USD", "SGD/USD", "NZD/USD",
+                ];
                 for (i, pair) in fx_pairs.iter().enumerate() {
                     let price = 1_000_000u64 + (i as u64 * 10_000);
-                    client.submit_public_transaction(&json!({"type":"oracle_price","pair":pair,"price":price})).await?;
+                    client
+                        .submit_public_transaction(
+                            &json!({"type":"oracle_price","pair":pair,"price":price}),
+                        )
+                        .await?;
                 }
                 Ok(BehaviorResult::success("10 FX pairs submitted"))
             }
             "oracle.verify_harmonic_mean" | "oracle.verify_staleness" => {
                 let root = client.get_state_root().await?;
-                Ok(BehaviorResult::success(format!("oracle invariant verified at state root")))
+                Ok(BehaviorResult::success(format!(
+                    "oracle invariant verified at state root"
+                )))
             }
-            _ => Err(BotError::NetworkError(format!("Oracle: unknown behavior {behavior_id}")))
+            _ => Err(BotError::NetworkError(format!(
+                "Oracle: unknown behavior {behavior_id}"
+            ))),
         }
     }
-    async fn teardown(&mut self) -> Result<()> { Ok(()) }
-    fn id(&self) -> &str { &self.id }
-    fn role(&self) -> &str { "oracle" }
+    async fn teardown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn role(&self) -> &str {
+        "oracle"
+    }
 }
 
 // =============================================================================
@@ -599,7 +949,12 @@ pub struct BridgeBot {
 }
 
 impl BridgeBot {
-    pub fn new(id: String) -> Self { Self { id, adnet_url: String::new() } }
+    pub fn new(id: String) -> Self {
+        Self {
+            id,
+            adnet_url: String::new(),
+        }
+    }
 }
 
 #[async_trait]
@@ -612,27 +967,63 @@ impl Bot for BridgeBot {
         let client = AdnetClient::new(self.adnet_url.clone())?;
         match behavior_id {
             "bridge.lock_ax" => {
-                let resp = client.submit_private_transaction(&json!({"type":"bridge_lock","amount":10000,"bot_id":&self.id})).await?;
-                Ok(BehaviorResult::success(format!("AX locked: {:?}", resp.get("lock_id"))))
+                let resp = client
+                    .submit_private_transaction(
+                        &json!({"type":"bridge_lock","amount":10000,"bot_id":&self.id}),
+                    )
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "AX locked: {:?}",
+                    resp.get("lock_id")
+                )))
             }
             "bridge.mint_sax" => {
-                let resp = client.submit_public_transaction(&json!({"type":"mint_sax","amount":10000,"bot_id":&self.id})).await?;
-                Ok(BehaviorResult::success(format!("sAX minted: {:?}", resp.get("mint_id"))))
+                let resp = client
+                    .submit_public_transaction(
+                        &json!({"type":"mint_sax","amount":10000,"bot_id":&self.id}),
+                    )
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "sAX minted: {:?}",
+                    resp.get("mint_id")
+                )))
             }
             "bridge.burn_sax" => {
-                let resp = client.submit_public_transaction(&json!({"type":"burn_sax","amount":10000,"bot_id":&self.id})).await?;
-                Ok(BehaviorResult::success(format!("sAX burned: {:?}", resp.get("burn_id"))))
+                let resp = client
+                    .submit_public_transaction(
+                        &json!({"type":"burn_sax","amount":10000,"bot_id":&self.id}),
+                    )
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "sAX burned: {:?}",
+                    resp.get("burn_id")
+                )))
             }
             "bridge.unlock_ax" => {
-                let resp = client.submit_private_transaction(&json!({"type":"bridge_unlock","amount":10000,"bot_id":&self.id})).await?;
-                Ok(BehaviorResult::success(format!("AX unlocked: {:?}", resp.get("unlock_id"))))
+                let resp = client
+                    .submit_private_transaction(
+                        &json!({"type":"bridge_unlock","amount":10000,"bot_id":&self.id}),
+                    )
+                    .await?;
+                Ok(BehaviorResult::success(format!(
+                    "AX unlocked: {:?}",
+                    resp.get("unlock_id")
+                )))
             }
-            _ => Err(BotError::NetworkError(format!("Bridge: unknown behavior {behavior_id}")))
+            _ => Err(BotError::NetworkError(format!(
+                "Bridge: unknown behavior {behavior_id}"
+            ))),
         }
     }
-    async fn teardown(&mut self) -> Result<()> { Ok(()) }
-    fn id(&self) -> &str { &self.id }
-    fn role(&self) -> &str { "bridge" }
+    async fn teardown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn role(&self) -> &str {
+        "bridge"
+    }
 }
 
 // =============================================================================
@@ -645,7 +1036,12 @@ pub struct MessengerBot {
 }
 
 impl MessengerBot {
-    pub fn new(id: String) -> Self { Self { id, adnet_url: String::new() } }
+    pub fn new(id: String) -> Self {
+        Self {
+            id,
+            adnet_url: String::new(),
+        }
+    }
 }
 
 #[async_trait]
@@ -659,14 +1055,25 @@ impl Bot for MessengerBot {
         match behavior_id {
             "messenger.send" => {
                 let resp = client.submit_public_transaction(&json!({"type":"send_message","to":"broadcast","msg":"gauntlet test","from":&self.id})).await?;
-                Ok(BehaviorResult::success(format!("message sent: {:?}", resp.get("msg_id"))))
+                Ok(BehaviorResult::success(format!(
+                    "message sent: {:?}",
+                    resp.get("msg_id")
+                )))
             }
-            _ => Err(BotError::NetworkError(format!("Messenger: unknown behavior {behavior_id}")))
+            _ => Err(BotError::NetworkError(format!(
+                "Messenger: unknown behavior {behavior_id}"
+            ))),
         }
     }
-    async fn teardown(&mut self) -> Result<()> { Ok(()) }
-    fn id(&self) -> &str { &self.id }
-    fn role(&self) -> &str { "messenger" }
+    async fn teardown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn role(&self) -> &str {
+        "messenger"
+    }
 }
 
 // =============================================================================
@@ -679,7 +1086,12 @@ pub struct ScannerBot {
 }
 
 impl ScannerBot {
-    pub fn new(id: String) -> Self { Self { id, adnet_url: String::new() } }
+    pub fn new(id: String) -> Self {
+        Self {
+            id,
+            adnet_url: String::new(),
+        }
+    }
 }
 
 #[async_trait]
@@ -693,22 +1105,39 @@ impl Bot for ScannerBot {
         match behavior_id {
             "scanner.index_block" => {
                 let root = client.get_state_root().await?;
-                Ok(BehaviorResult::success(format!("indexed block — alpha root: {:?}", root.root)))
+                Ok(BehaviorResult::success(format!(
+                    "indexed block — alpha root: {:?}",
+                    root.root
+                )))
             }
             "scanner.verify_state" => {
                 let validators = client.get_validators().await?;
-                Ok(BehaviorResult::success(format!("state verified — {} validators", validators.len())))
+                Ok(BehaviorResult::success(format!(
+                    "state verified — {} validators",
+                    validators.len()
+                )))
             }
             "scanner.query_history" => {
                 let mempool = client.get_mempool().await?;
-                Ok(BehaviorResult::success(format!("history queried — mempool size: {:?}", mempool.size)))
+                Ok(BehaviorResult::success(format!(
+                    "history queried — mempool size: {:?}",
+                    mempool.size
+                )))
             }
-            _ => Err(BotError::NetworkError(format!("Scanner: unknown behavior {behavior_id}")))
+            _ => Err(BotError::NetworkError(format!(
+                "Scanner: unknown behavior {behavior_id}"
+            ))),
         }
     }
-    async fn teardown(&mut self) -> Result<()> { Ok(()) }
-    fn id(&self) -> &str { &self.id }
-    fn role(&self) -> &str { "scanner" }
+    async fn teardown(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn role(&self) -> &str {
+        "scanner"
+    }
 }
 
 // =============================================================================
@@ -746,31 +1175,68 @@ impl GauntletFleet {
             AdversarialAttack::DoubleSpend,
         ];
         Self {
-            user_transactors: (0..30).map(|i| UserTransactorBot::new(format!("ut-{i:02}"))).collect(),
-            governors: (0..10).map(|i| GauntletGovernorBot::new(format!("gov-{i:02}"))).collect(),
-            delta_voters: (0..30).map(|i| DeltaVoterBot::new(format!("dv-{i:02}"))).collect(),
-            validators: (0..7).map(|i| ValidatorBot::new(format!("val-{i:02}"), i >= 5)).collect(),
-            provers: (0..2).map(|i| ProverBot::new(format!("prv-{i:02}"))).collect(),
-            tech_reps: (0..5).map(|i| TechRepBot::new(format!("tr-{i:02}"))).collect(),
-            traders: (0..40).map(|i| crate::trader::TraderBot::new(format!("trader-{i:02}"))).collect(),
-            earn_in: (0..10).map(|i| EarnInBot::new(format!("ei-{i:02}"), i)).collect(),
-            atomic_swaps: (0..5).map(|i| AtomicSwapBot::new(format!("swap-{i:02}"))).collect(),
-            dead_wallets: (0..5).map(|i| DeadWalletBot::new(format!("dw-{i:02}"))).collect(),
-            adversarials: adversarial_attacks.into_iter().enumerate()
-                .map(|(i, a)| AdversarialBot::new(format!("adv-{i:02}"), a)).collect(),
+            user_transactors: (0..30)
+                .map(|i| UserTransactorBot::new(format!("ut-{i:02}")))
+                .collect(),
+            governors: (0..10)
+                .map(|i| GauntletGovernorBot::new(format!("gov-{i:02}")))
+                .collect(),
+            delta_voters: (0..30)
+                .map(|i| DeltaVoterBot::new(format!("dv-{i:02}")))
+                .collect(),
+            validators: (0..7)
+                .map(|i| ValidatorBot::new(format!("val-{i:02}"), i >= 5))
+                .collect(),
+            provers: (0..2)
+                .map(|i| ProverBot::new(format!("prv-{i:02}")))
+                .collect(),
+            tech_reps: (0..5)
+                .map(|i| TechRepBot::new(format!("tr-{i:02}")))
+                .collect(),
+            traders: (0..40)
+                .map(|i| crate::trader::TraderBot::new(format!("trader-{i:02}")))
+                .collect(),
+            earn_in: (0..10)
+                .map(|i| EarnInBot::new(format!("ei-{i:02}"), i))
+                .collect(),
+            atomic_swaps: (0..5)
+                .map(|i| AtomicSwapBot::new(format!("swap-{i:02}")))
+                .collect(),
+            dead_wallets: (0..5)
+                .map(|i| DeadWalletBot::new(format!("dw-{i:02}")))
+                .collect(),
+            adversarials: adversarial_attacks
+                .into_iter()
+                .enumerate()
+                .map(|(i, a)| AdversarialBot::new(format!("adv-{i:02}"), a))
+                .collect(),
             oracles: vec![OracleBot::new("oracle-00".to_string())],
-            bridges: (0..10).map(|i| BridgeBot::new(format!("bridge-{i:02}"))).collect(),
-            messengers: (0..5).map(|i| MessengerBot::new(format!("msg-{i:02}"))).collect(),
+            bridges: (0..10)
+                .map(|i| BridgeBot::new(format!("bridge-{i:02}")))
+                .collect(),
+            messengers: (0..5)
+                .map(|i| MessengerBot::new(format!("msg-{i:02}")))
+                .collect(),
             scanners: vec![ScannerBot::new("scanner-00".to_string())],
         }
     }
 
     pub fn total_count(&self) -> usize {
-        self.user_transactors.len() + self.governors.len() + self.delta_voters.len() +
-        self.validators.len() + self.provers.len() + self.tech_reps.len() +
-        self.traders.len() + self.earn_in.len() + self.atomic_swaps.len() +
-        self.dead_wallets.len() + self.adversarials.len() + self.oracles.len() +
-        self.bridges.len() + self.messengers.len() + self.scanners.len()
+        self.user_transactors.len()
+            + self.governors.len()
+            + self.delta_voters.len()
+            + self.validators.len()
+            + self.provers.len()
+            + self.tech_reps.len()
+            + self.traders.len()
+            + self.earn_in.len()
+            + self.atomic_swaps.len()
+            + self.dead_wallets.len()
+            + self.adversarials.len()
+            + self.oracles.len()
+            + self.bridges.len()
+            + self.messengers.len()
+            + self.scanners.len()
     }
 }
 
@@ -809,31 +1275,61 @@ impl LightFleet {
             AdversarialAttack::Replay,
         ];
         Self {
-            user_transactors: (0..10).map(|i| UserTransactorBot::new(format!("ut-{i:02}"))).collect(),
-            governors: (0..5).map(|i| GauntletGovernorBot::new(format!("gov-{i:02}"))).collect(),
-            delta_voters: (0..10).map(|i| DeltaVoterBot::new(format!("dv-{i:02}"))).collect(),
+            user_transactors: (0..10)
+                .map(|i| UserTransactorBot::new(format!("ut-{i:02}")))
+                .collect(),
+            governors: (0..5)
+                .map(|i| GauntletGovernorBot::new(format!("gov-{i:02}")))
+                .collect(),
+            delta_voters: (0..10)
+                .map(|i| DeltaVoterBot::new(format!("dv-{i:02}")))
+                .collect(),
             // All active — no shadow validators in light topology
-            validators: (0..5).map(|i| ValidatorBot::new(format!("val-{i:02}"), false)).collect(),
+            validators: (0..5)
+                .map(|i| ValidatorBot::new(format!("val-{i:02}"), false))
+                .collect(),
             // Single prover (testnet006)
             provers: vec![ProverBot::new("prv-00".to_string())],
-            tech_reps: (0..3).map(|i| TechRepBot::new(format!("tr-{i:02}"))).collect(),
-            traders: (0..15).map(|i| crate::trader::TraderBot::new(format!("trader-{i:02}"))).collect(),
+            tech_reps: (0..3)
+                .map(|i| TechRepBot::new(format!("tr-{i:02}")))
+                .collect(),
+            traders: (0..15)
+                .map(|i| crate::trader::TraderBot::new(format!("trader-{i:02}")))
+                .collect(),
             // 4 earn-in bots: indices 0,1,2 succeed; index 3 fails (light: expects_success when index < 3)
-            earn_in: (0..4).map(|i| EarnInBot::new(format!("ei-{i:02}"), i)).collect(),
-            atomic_swaps: (0..2).map(|i| AtomicSwapBot::new(format!("swap-{i:02}"))).collect(),
-            adversarials: light_attacks.into_iter().enumerate()
-                .map(|(i, a)| AdversarialBot::new(format!("adv-{i:02}"), a)).collect(),
+            earn_in: (0..4)
+                .map(|i| EarnInBot::new(format!("ei-{i:02}"), i))
+                .collect(),
+            atomic_swaps: (0..2)
+                .map(|i| AtomicSwapBot::new(format!("swap-{i:02}")))
+                .collect(),
+            adversarials: light_attacks
+                .into_iter()
+                .enumerate()
+                .map(|(i, a)| AdversarialBot::new(format!("adv-{i:02}"), a))
+                .collect(),
             oracles: vec![OracleBot::new("oracle-00".to_string())],
-            bridges: (0..4).map(|i| BridgeBot::new(format!("bridge-{i:02}"))).collect(),
+            bridges: (0..4)
+                .map(|i| BridgeBot::new(format!("bridge-{i:02}")))
+                .collect(),
             scanners: vec![ScannerBot::new("scanner-00".to_string())],
         }
     }
 
     pub fn total_count(&self) -> usize {
-        self.user_transactors.len() + self.governors.len() + self.delta_voters.len() +
-        self.validators.len() + self.provers.len() + self.tech_reps.len() +
-        self.traders.len() + self.earn_in.len() + self.atomic_swaps.len() +
-        self.adversarials.len() + self.oracles.len() + self.bridges.len() + self.scanners.len()
+        self.user_transactors.len()
+            + self.governors.len()
+            + self.delta_voters.len()
+            + self.validators.len()
+            + self.provers.len()
+            + self.tech_reps.len()
+            + self.traders.len()
+            + self.earn_in.len()
+            + self.atomic_swaps.len()
+            + self.adversarials.len()
+            + self.oracles.len()
+            + self.bridges.len()
+            + self.scanners.len()
     }
 
     /// gRPC coordinator address — testnet006 (bot orchestrator in light topology)
@@ -853,14 +1349,22 @@ mod tests {
     // ── Full fleet (TN006) ────────────────────────────────────────────────────
     #[test]
     fn test_fleet_total_count() {
-        assert_eq!(GauntletFleet::build().total_count(), 169, "Full fleet must have exactly 169 bots");
+        assert_eq!(
+            GauntletFleet::build().total_count(),
+            169,
+            "Full fleet must have exactly 169 bots"
+        );
     }
 
     #[test]
     fn test_earn_in_success_fail_split() {
         let fleet = GauntletFleet::build();
         let success = fleet.earn_in.iter().filter(|b| b.expects_success()).count();
-        let fail = fleet.earn_in.iter().filter(|b| !b.expects_success()).count();
+        let fail = fleet
+            .earn_in
+            .iter()
+            .filter(|b| !b.expects_success())
+            .count();
         assert_eq!(success, 8);
         assert_eq!(fail, 2);
     }
@@ -882,13 +1386,20 @@ mod tests {
     // ── Light fleet (TN006-LIGHT) ─────────────────────────────────────────────
     #[test]
     fn test_light_fleet_total_count() {
-        assert_eq!(LightFleet::build().total_count(), 66, "Light fleet must have exactly 66 bots");
+        assert_eq!(
+            LightFleet::build().total_count(),
+            66,
+            "Light fleet must have exactly 66 bots"
+        );
     }
 
     #[test]
     fn test_light_fleet_no_shadow_validators() {
         let fleet = LightFleet::build();
-        assert!(fleet.validators.iter().all(|v| !v.is_shadow), "Light fleet has no shadow validators");
+        assert!(
+            fleet.validators.iter().all(|v| !v.is_shadow),
+            "Light fleet has no shadow validators"
+        );
         assert_eq!(fleet.validators.len(), 5);
     }
 
@@ -901,7 +1412,10 @@ mod tests {
 
     #[test]
     fn test_light_fleet_coordinator() {
-        assert_eq!(LightFleet::coordinator_addr(), "testnet006.ac-dc.network:50051");
+        assert_eq!(
+            LightFleet::coordinator_addr(),
+            "testnet006.ac-dc.network:50051"
+        );
     }
 
     #[test]
@@ -912,7 +1426,10 @@ mod tests {
         // Indices 0,1,2,3 → 0,1,2 succeed (< 8), 3 also succeeds by this logic
         // Light variant: use index < 3 for light-specific check
         let fail_count = fleet.earn_in.iter().filter(|b| b.index >= 3).count();
-        assert_eq!(fail_count, 1, "Light fleet: 1 earn-in bot (index 3) expected to fail");
+        assert_eq!(
+            fail_count, 1,
+            "Light fleet: 1 earn-in bot (index 3) expected to fail"
+        );
     }
 
     #[test]

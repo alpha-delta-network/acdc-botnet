@@ -1,4 +1,4 @@
-// Governance manipulation attack patterns  
+// Governance manipulation attack patterns
 use adnet_testbot::{BehaviorResult, BotContext, Result};
 use adnet_testbot_integration::AdnetClient;
 use serde::{Deserialize, Serialize};
@@ -13,16 +13,26 @@ pub struct MaliciousProposal {
 
 impl MaliciousProposal {
     pub async fn execute(&self, context: &BotContext) -> Result<BehaviorResult> {
-        tracing::warn!("ATTACK: Malicious governance proposal — {}={:?}", self.parameter, self.malicious_value);
+        tracing::warn!(
+            "ATTACK: Malicious governance proposal — {}={:?}",
+            self.parameter,
+            self.malicious_value
+        );
         let client = AdnetClient::new(context.execution.network.adnet_unified.clone())?;
-        let result = client.submit_governance_proposal(&json!({
-            "type": "parameter_update",
-            "parameter": &self.parameter,
-            "new_value": &self.malicious_value,
-        })).await;
+        let result = client
+            .submit_governance_proposal(&json!({
+                "type": "parameter_update",
+                "parameter": &self.parameter,
+                "new_value": &self.malicious_value,
+            }))
+            .await;
         match result {
-            Err(_) => Ok(BehaviorResult::error("malicious proposal rejected by governance validation")),
-            Ok(pid) => Ok(BehaviorResult::success(format!("WARNING: malicious proposal #{pid} accepted!"))),
+            Err(_) => Ok(BehaviorResult::error(
+                "malicious proposal rejected by governance validation",
+            )),
+            Ok(pid) => Ok(BehaviorResult::success(format!(
+                "WARNING: malicious proposal #{pid} accepted!"
+            ))),
         }
     }
 }
@@ -35,16 +45,25 @@ pub struct GrimTriggerAbuse {
 
 impl GrimTriggerAbuse {
     pub async fn execute(&self, context: &BotContext) -> Result<BehaviorResult> {
-        tracing::warn!("ATTACK: Fraudulent grim trigger against GID {}", self.target_gid);
+        tracing::warn!(
+            "ATTACK: Fraudulent grim trigger against GID {}",
+            self.target_gid
+        );
         let client = AdnetClient::new(context.execution.network.adnet_unified.clone())?;
-        let result = client.submit_governance_proposal(&json!({
-            "type": "grim_trigger_report",
-            "target_gid": &self.target_gid,
-            "fraudulent": true,
-        })).await;
+        let result = client
+            .submit_governance_proposal(&json!({
+                "type": "grim_trigger_report",
+                "target_gid": &self.target_gid,
+                "fraudulent": true,
+            }))
+            .await;
         match result {
-            Err(_) => Ok(BehaviorResult::error("fraudulent grim trigger rejected — evidence validation failed")),
-            Ok(_) => Ok(BehaviorResult::success("WARNING: fraudulent trigger accepted — governance regression!")),
+            Err(_) => Ok(BehaviorResult::error(
+                "fraudulent grim trigger rejected — evidence validation failed",
+            )),
+            Ok(_) => Ok(BehaviorResult::success(
+                "WARNING: fraudulent trigger accepted — governance regression!",
+            )),
         }
     }
 }
