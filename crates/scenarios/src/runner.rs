@@ -255,10 +255,10 @@ fn build_light_phase(phase: u8) -> Vec<(Box<dyn Bot + Send>, &'static str)> {
         0 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
             for b in fleet.validators {
-                v.push((Box::new(b), "validator.register"));
+                v.push((Box::new(b), "validator.attest"));
             }
             for b in fleet.provers {
-                v.push((Box::new(b), "prover.register"));
+                v.push((Box::new(b), "prover.submit_proof"));
             }
             v
         }
@@ -301,10 +301,10 @@ fn build_light_phase(phase: u8) -> Vec<(Box<dyn Bot + Send>, &'static str)> {
         4 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
             for b in fleet.validators {
-                v.push((Box::new(b), "validator.register"));
+                v.push((Box::new(b), "validator.attest"));
             }
             for b in fleet.provers {
-                v.push((Box::new(b), "prover.register"));
+                v.push((Box::new(b), "prover.submit_proof"));
             }
             for b in fleet.tech_reps {
                 v.push((Box::new(b), "techrep.register"));
@@ -346,10 +346,10 @@ fn build_full_phase(phase: u8) -> Vec<(Box<dyn Bot + Send>, &'static str)> {
         0 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
             for b in fleet.validators {
-                v.push((Box::new(b), "validator.register"));
+                v.push((Box::new(b), "validator.attest"));
             }
             for b in fleet.provers {
-                v.push((Box::new(b), "prover.register"));
+                v.push((Box::new(b), "prover.submit_proof"));
             }
             v
         }
@@ -392,10 +392,10 @@ fn build_full_phase(phase: u8) -> Vec<(Box<dyn Bot + Send>, &'static str)> {
         4 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
             for b in fleet.validators {
-                v.push((Box::new(b), "validator.register"));
+                v.push((Box::new(b), "validator.attest"));
             }
             for b in fleet.provers {
-                v.push((Box::new(b), "prover.register"));
+                v.push((Box::new(b), "prover.submit_proof"));
             }
             for b in fleet.tech_reps {
                 v.push((Box::new(b), "techrep.register"));

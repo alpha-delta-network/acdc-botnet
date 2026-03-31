@@ -21,6 +21,10 @@ pub struct StateRoot {
     pub hash: Option<String>,
     pub height: Option<u64>,
     pub block_height: Option<u64>,
+    pub alpha_height: Option<u64>,
+    pub delta_height: Option<u64>,
+    pub alpha_state_root: Option<String>,
+    pub delta_state_root: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -133,7 +137,7 @@ impl AdnetClient {
 
     /// Get latest state root (GET /state)
     pub async fn get_state_root(&self) -> Result<StateRoot> {
-        self.get_json("/state").await
+        self.get_json("/api/v1/chain/height").await
     }
 
     /// Get validator list (GET /validators)
