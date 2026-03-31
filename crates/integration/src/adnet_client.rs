@@ -107,7 +107,7 @@ impl AdnetClient {
 
     fn auth_header(&self) -> Vec<(String, String)> {
         if let Some(key) = &self.api_key {
-            vec![("X-Api-Key".to_string(), key.clone())]
+            vec![("Authorization".to_string(), format!("Bearer {}", key))]
         } else {
             vec![]
         }
