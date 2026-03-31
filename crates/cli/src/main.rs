@@ -74,9 +74,7 @@ enum Commands {
     },
 
     /// Run a simple unit test
-    Test {
-        test_type: String,
-    },
+    Test { test_type: String },
 }
 
 /// Clap-friendly fleet argument.
@@ -105,11 +103,21 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Run { scenario, distributed, duration, bots } => {
+        Commands::Run {
+            scenario,
+            distributed,
+            duration,
+            bots,
+        } => {
             run_scenario(&scenario, distributed, duration, bots).await?;
         }
 
-        Commands::Gauntlet { fleet, phase, adnet_url, output_dir } => {
+        Commands::Gauntlet {
+            fleet,
+            phase,
+            adnet_url,
+            output_dir,
+        } => {
             run_gauntlet(fleet.into(), phase, adnet_url, output_dir).await?;
         }
 
@@ -119,10 +127,13 @@ async fn main() -> anyhow::Result<()> {
             coordinator.serve(bind).await?;
         }
 
-        Commands::Worker { coordinator, max_bots, worker_id } => {
-            let worker_id = worker_id.unwrap_or_else(|| {
-                format!("worker-{}", &uuid::Uuid::new_v4().to_string()[..8])
-            });
+        Commands::Worker {
+            coordinator,
+            max_bots,
+            worker_id,
+        } => {
+            let worker_id = worker_id
+                .unwrap_or_else(|| format!("worker-{}", &uuid::Uuid::new_v4().to_string()[..8]));
             println!(
                 "Starting worker: {} (coordinator: {}, max_bots: {})",
                 worker_id, coordinator, max_bots
@@ -237,16 +248,23 @@ async fn run_scenario(
 async fn run_local_scenario(scenario: &str, bot_count: usize) -> anyhow::Result<()> {
     // Route gauntlet scenarios to the dedicated command.
     if scenario == "gauntlet-light" || scenario == "gauntlet_light" {
-        println!(
-            "Tip: use 'adnet-testbots gauntlet --fleet light' for the full gauntlet runner."
-        );
+        println!("Tip: use 'adnet-testbots gauntlet --fleet light' for the full gauntlet runner.");
         let adnet_url = std::env::var("ADNET_URL")
             .unwrap_or_else(|_| "http://testnet001.ac-dc.network:8080".to_string());
-        run_gauntlet(FleetType::Light, None, adnet_url, "./gauntlet-output".to_string()).await?;
+        run_gauntlet(
+            FleetType::Light,
+            None,
+            adnet_url,
+            "./gauntlet-output".to_string(),
+        )
+        .await?;
         return Ok(());
     }
 
-    println!("Setting up local scenario: {} ({} bots)", scenario, bot_count);
+    println!(
+        "Setting up local scenario: {} ({} bots)",
+        scenario, bot_count
+    );
     let generator = IdentityGenerator::new();
     let mut bots: Vec<Box<dyn Bot>> = Vec::new();
 

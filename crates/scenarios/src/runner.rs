@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use tracing::info;
 
-use adnet_testbot::{Bot, BotContext, ExecutionContext, IdentityGenerator, Wallet};
 use adnet_testbot::context::NetworkEndpoints;
+use adnet_testbot::{Bot, BotContext, ExecutionContext, IdentityGenerator, Wallet};
 use adnet_testbot_roles::gauntlet_bots::{GauntletFleet, LightFleet};
 
 // =============================================================================
@@ -22,11 +22,15 @@ pub struct ScenarioRunner {
 
 impl ScenarioRunner {
     pub fn new() -> Self {
-        Self { scenarios: Vec::new() }
+        Self {
+            scenarios: Vec::new(),
+        }
     }
 
     #[allow(unused_variables)]
-    pub fn load_scenario(&mut self, yaml_path: &str) -> Result<()> { Ok(()) }
+    pub fn load_scenario(&mut self, yaml_path: &str) -> Result<()> {
+        Ok(())
+    }
 
     pub async fn run_scenario(&self, name: &str) -> Result<ScenarioResult> {
         Ok(ScenarioResult {
@@ -40,7 +44,9 @@ impl ScenarioRunner {
 }
 
 impl Default for ScenarioRunner {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,7 +115,11 @@ pub struct GauntletPhaseRunner {
 
 impl GauntletPhaseRunner {
     pub fn new(adnet_url: String, fleet_type: FleetType, output_dir: String) -> Self {
-        Self { adnet_url, fleet_type, output_dir }
+        Self {
+            adnet_url,
+            fleet_type,
+            output_dir,
+        }
     }
 
     /// Run a single phase. Returns `Err` only if setup machinery fails; bot
@@ -119,7 +129,9 @@ impl GauntletPhaseRunner {
         if phase > max_phase {
             return Err(anyhow::anyhow!(
                 "Phase {} exceeds max phase {} for {:?} fleet",
-                phase, max_phase, self.fleet_type
+                phase,
+                max_phase,
+                self.fleet_type
             ));
         }
 
@@ -201,7 +213,13 @@ impl GauntletPhaseRunner {
             duration_ms,
         );
 
-        Ok(PhaseResult { phase, success, bots_run, errors, duration_ms })
+        Ok(PhaseResult {
+            phase,
+            success,
+            bots_run,
+            errors,
+            duration_ms,
+        })
     }
 }
 
@@ -211,13 +229,17 @@ impl GauntletPhaseRunner {
 
 fn required_success_rate(phase: u8) -> f64 {
     match phase {
-        0 => 1.0,   // health gate — all must pass
-        4 => 0.75,  // earn-in: 3/4 succeed, 1 expected to fail
+        0 => 1.0,  // health gate — all must pass
+        4 => 0.75, // earn-in: 3/4 succeed, 1 expected to fail
         _ => 0.8,
     }
 }
 
-fn make_context(bot_id: &str, role: &str, network: &NetworkEndpoints) -> anyhow::Result<BotContext> {
+fn make_context(
+    bot_id: &str,
+    role: &str,
+    network: &NetworkEndpoints,
+) -> anyhow::Result<BotContext> {
     let gen = IdentityGenerator::new();
     let identity = gen.generate(bot_id.to_string())?;
     let wallet = Wallet::new(bot_id.to_string());
@@ -232,48 +254,84 @@ fn build_light_phase(phase: u8) -> Vec<(Box<dyn Bot + Send>, &'static str)> {
     match phase {
         0 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
-            for b in fleet.validators { v.push((Box::new(b), "validator.register")); }
-            for b in fleet.provers    { v.push((Box::new(b), "prover.register")); }
+            for b in fleet.validators {
+                v.push((Box::new(b), "validator.register"));
+            }
+            for b in fleet.provers {
+                v.push((Box::new(b), "prover.register"));
+            }
             v
         }
         1 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
-            for b in fleet.user_transactors { v.push((Box::new(b), "transfer.ax_private")); }
-            for b in fleet.bridges          { v.push((Box::new(b), "bridge.lock_ax")); }
-            for b in fleet.scanners         { v.push((Box::new(b), "scanner.index_block")); }
+            for b in fleet.user_transactors {
+                v.push((Box::new(b), "transfer.ax_private"));
+            }
+            for b in fleet.bridges {
+                v.push((Box::new(b), "bridge.lock_ax"));
+            }
+            for b in fleet.scanners {
+                v.push((Box::new(b), "scanner.index_block"));
+            }
             v
         }
         2 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
-            for b in fleet.governors    { v.push((Box::new(b), "governance.propose.parameter")); }
-            for b in fleet.delta_voters { v.push((Box::new(b), "governance.delta.vote")); }
-            for b in fleet.tech_reps    { v.push((Box::new(b), "techrep.vote_forge")); }
+            for b in fleet.governors {
+                v.push((Box::new(b), "governance.propose.parameter"));
+            }
+            for b in fleet.delta_voters {
+                v.push((Box::new(b), "governance.delta.vote"));
+            }
+            for b in fleet.tech_reps {
+                v.push((Box::new(b), "techrep.vote_forge"));
+            }
             v
         }
         3 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
-            for b in fleet.traders { v.push((Box::new(b), "dex.place_limit_order")); }
-            for b in fleet.oracles { v.push((Box::new(b), "oracle.submit_prices")); }
+            for b in fleet.traders {
+                v.push((Box::new(b), "dex.place_limit_order"));
+            }
+            for b in fleet.oracles {
+                v.push((Box::new(b), "oracle.submit_prices"));
+            }
             v
         }
         4 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
-            for b in fleet.validators { v.push((Box::new(b), "validator.register")); }
-            for b in fleet.provers    { v.push((Box::new(b), "prover.register")); }
-            for b in fleet.tech_reps  { v.push((Box::new(b), "techrep.register")); }
-            for b in fleet.earn_in    { v.push((Box::new(b), "earnin.apply")); }
+            for b in fleet.validators {
+                v.push((Box::new(b), "validator.register"));
+            }
+            for b in fleet.provers {
+                v.push((Box::new(b), "prover.register"));
+            }
+            for b in fleet.tech_reps {
+                v.push((Box::new(b), "techrep.register"));
+            }
+            for b in fleet.earn_in {
+                v.push((Box::new(b), "earnin.apply"));
+            }
             v
         }
         5 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
-            for b in fleet.traders       { v.push((Box::new(b), "dex.place_limit_order")); }
-            for b in fleet.atomic_swaps  { v.push((Box::new(b), "atomicswap.htlc_initiate")); }
-            for b in fleet.oracles       { v.push((Box::new(b), "oracle.submit_prices")); }
+            for b in fleet.traders {
+                v.push((Box::new(b), "dex.place_limit_order"));
+            }
+            for b in fleet.atomic_swaps {
+                v.push((Box::new(b), "atomicswap.htlc_initiate"));
+            }
+            for b in fleet.oracles {
+                v.push((Box::new(b), "oracle.submit_prices"));
+            }
             v
         }
         6 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
-            for b in fleet.adversarials { v.push((Box::new(b), "attack.execute")); }
+            for b in fleet.adversarials {
+                v.push((Box::new(b), "attack.execute"));
+            }
             v
         }
         _ => Vec::new(),
@@ -287,58 +345,98 @@ fn build_full_phase(phase: u8) -> Vec<(Box<dyn Bot + Send>, &'static str)> {
     match phase {
         0 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
-            for b in fleet.validators { v.push((Box::new(b), "validator.register")); }
-            for b in fleet.provers    { v.push((Box::new(b), "prover.register")); }
+            for b in fleet.validators {
+                v.push((Box::new(b), "validator.register"));
+            }
+            for b in fleet.provers {
+                v.push((Box::new(b), "prover.register"));
+            }
             v
         }
         1 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
-            for b in fleet.user_transactors { v.push((Box::new(b), "transfer.ax_private")); }
-            for b in fleet.bridges          { v.push((Box::new(b), "bridge.lock_ax")); }
-            for b in fleet.scanners         { v.push((Box::new(b), "scanner.index_block")); }
+            for b in fleet.user_transactors {
+                v.push((Box::new(b), "transfer.ax_private"));
+            }
+            for b in fleet.bridges {
+                v.push((Box::new(b), "bridge.lock_ax"));
+            }
+            for b in fleet.scanners {
+                v.push((Box::new(b), "scanner.index_block"));
+            }
             v
         }
         2 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
-            for b in fleet.governors    { v.push((Box::new(b), "governance.propose.parameter")); }
-            for b in fleet.delta_voters { v.push((Box::new(b), "governance.delta.vote")); }
-            for b in fleet.tech_reps    { v.push((Box::new(b), "techrep.vote_forge")); }
+            for b in fleet.governors {
+                v.push((Box::new(b), "governance.propose.parameter"));
+            }
+            for b in fleet.delta_voters {
+                v.push((Box::new(b), "governance.delta.vote"));
+            }
+            for b in fleet.tech_reps {
+                v.push((Box::new(b), "techrep.vote_forge"));
+            }
             v
         }
         3 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
-            for b in fleet.traders { v.push((Box::new(b), "dex.place_limit_order")); }
-            for b in fleet.oracles { v.push((Box::new(b), "oracle.submit_prices")); }
+            for b in fleet.traders {
+                v.push((Box::new(b), "dex.place_limit_order"));
+            }
+            for b in fleet.oracles {
+                v.push((Box::new(b), "oracle.submit_prices"));
+            }
             v
         }
         4 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
-            for b in fleet.validators { v.push((Box::new(b), "validator.register")); }
-            for b in fleet.provers    { v.push((Box::new(b), "prover.register")); }
-            for b in fleet.tech_reps  { v.push((Box::new(b), "techrep.register")); }
-            for b in fleet.earn_in    { v.push((Box::new(b), "earnin.apply")); }
+            for b in fleet.validators {
+                v.push((Box::new(b), "validator.register"));
+            }
+            for b in fleet.provers {
+                v.push((Box::new(b), "prover.register"));
+            }
+            for b in fleet.tech_reps {
+                v.push((Box::new(b), "techrep.register"));
+            }
+            for b in fleet.earn_in {
+                v.push((Box::new(b), "earnin.apply"));
+            }
             v
         }
         5 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
-            for b in fleet.traders      { v.push((Box::new(b), "dex.place_limit_order")); }
-            for b in fleet.atomic_swaps { v.push((Box::new(b), "atomicswap.htlc_initiate")); }
-            for b in fleet.oracles      { v.push((Box::new(b), "oracle.submit_prices")); }
+            for b in fleet.traders {
+                v.push((Box::new(b), "dex.place_limit_order"));
+            }
+            for b in fleet.atomic_swaps {
+                v.push((Box::new(b), "atomicswap.htlc_initiate"));
+            }
+            for b in fleet.oracles {
+                v.push((Box::new(b), "oracle.submit_prices"));
+            }
             v
         }
         6 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
-            for b in fleet.adversarials { v.push((Box::new(b), "attack.execute")); }
+            for b in fleet.adversarials {
+                v.push((Box::new(b), "attack.execute"));
+            }
             v
         }
         7 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
-            for b in fleet.dead_wallets { v.push((Box::new(b), "deadwallet.trigger_check")); }
+            for b in fleet.dead_wallets {
+                v.push((Box::new(b), "deadwallet.trigger_check"));
+            }
             v
         }
         8 => {
             let mut v: Vec<(Box<dyn Bot + Send>, &'static str)> = Vec::new();
-            for b in fleet.messengers { v.push((Box::new(b), "messenger.send")); }
+            for b in fleet.messengers {
+                v.push((Box::new(b), "messenger.send"));
+            }
             v
         }
         _ => Vec::new(),
