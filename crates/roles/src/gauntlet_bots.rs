@@ -6,7 +6,8 @@
 //! Full fleet (169 bots): GauntletFleet::build()
 //! Light fleet (66 bots): LightFleet::build() — testnet001-005 + testnet006
 
-use adnet_testbot::{BehaviorResult, Bot, BotContext, BotError, Result};
+use adnet_testbot::{BehaviorResult, Bot, BotContext, BotError, Identity, Result};
+use hex;
 use adnet_testbot_integration::AdnetClient;
 use async_trait::async_trait;
 use serde_json::json;
@@ -91,6 +92,7 @@ pub struct GauntletGovernorBot {
     id: String,
     adnet_url: String,
     multisig_threshold: usize,
+    identity: Option<Identity>,
 }
 
 impl GauntletGovernorBot {
@@ -99,6 +101,7 @@ impl GauntletGovernorBot {
             id,
             adnet_url: String::new(),
             multisig_threshold: 3,
+            identity: None,
         }
     }
 }
@@ -107,6 +110,7 @@ impl GauntletGovernorBot {
 impl Bot for GauntletGovernorBot {
     async fn setup(&mut self, ctx: &BotContext) -> Result<()> {
         self.adnet_url = ctx.execution.network.adnet_unified.clone();
+        self.identity = Some(ctx.identity.clone());
         Ok(())
     }
     async fn execute_behavior(&mut self, behavior_id: &str) -> Result<BehaviorResult> {
@@ -138,47 +142,23 @@ impl Bot for GauntletGovernorBot {
                     .find(|p| p.get("status").and_then(|v| v.as_str()) == Some("active"))
                     .and_then(|p| p.get("id").and_then(|v| v.as_u64()))
                     .unwrap_or(1);
-
-                // Try to load wallet for signing via CLI
-                let wallet_path = std::env::var("BOT_WALLET_FILE")
-                    .unwrap_or_else(|_| "./config/testnet-bot-wallets.json".to_string());
-
-                if let Ok(wallet_data) = std::fs::read_to_string(&wallet_path) {
-                    if let Ok(wallets) =
-                        serde_json::from_str::<Vec<serde_json::Value>>(&wallet_data)
-                    {
-                        if let Some(wallet) = wallets.first() {
-                            if let Some(pk) =
-                                wallet.get("private_key").and_then(|v| v.as_str())
-                            {
-                                let _ = AdnetClient::execute_cli(
-                                    &[
-                                        "alpha",
-                                        "execute",
-                                        "-p",
-                                        "governance.alpha",
-                                        "-f",
-                                        "vote",
-                                        "-k",
-                                        pk,
-                                        "-i",
-                                        &format!("{}u128", proposal_id),
-                                        "1u8",
-                                        "-n",
-                                        &self.adnet_url,
-                                    ],
-                                    None,
-                                )
-                                .await;
-                                return Ok(BehaviorResult::success(format!(
-                                    "governance vote cast for proposal #{proposal_id}"
-                                )));
-                            }
-                        }
-                    }
-                }
+                let identity = self.identity.as_ref()
+                    .ok_or_else(|| BotError::NetworkError("no identity".into()))?;
+                // Message: proposal_id.to_le_bytes() (8) || b'Y' (VoteChoice::Yes)
+                let mut message = Vec::with_capacity(9);
+                message.extend_from_slice(&proposal_id.to_le_bytes());
+                message.push(b'Y');
+                let sig = identity.sign(&message)?;
+                let vk = identity.verifying_key()?;
+                let vote_body = json!({
+                    "voter_public_key": hex::encode(vk.as_bytes()),
+                    "vote": "yes",
+                    "signature": hex::encode(sig.to_bytes()),
+                });
+                let tally = client.submit_governance_vote(proposal_id, &vote_body).await?;
                 Ok(BehaviorResult::success(format!(
-                    "governance vote submitted (no wallet configured)"
+                    "governor voted on proposal #{proposal_id}: yes={:?}",
+                    tally.get("yes")
                 )))
             }
             "governance.execute" => {
@@ -188,11 +168,12 @@ impl Bot for GauntletGovernorBot {
                 for p in &proposals {
                     if p.get("status").and_then(|v| v.as_str()) == Some("passed") {
                         if let Some(id) = p.get("id").and_then(|v| v.as_u64()) {
-                            client
-                                .submit_public_transaction(
-                                    &json!({"chain_id":"delta","tx_bytes":"deadbeef00","proof":"cafebabe","fee":1000}),
+                            let _ = client
+                                .post_json_raw(
+                                    &format!("/api/v1/governance/proposals/{}/execute", id),
+                                    &json!({}),
                                 )
-                                .await?;
+                                .await;
                             executed += 1;
                         }
                     }
@@ -239,6 +220,7 @@ impl Bot for GauntletGovernorBot {
 pub struct DeltaVoterBot {
     id: String,
     adnet_url: String,
+    identity: Option<Identity>,
 }
 
 impl DeltaVoterBot {
@@ -246,6 +228,7 @@ impl DeltaVoterBot {
         Self {
             id,
             adnet_url: String::new(),
+            identity: None,
         }
     }
 }
@@ -254,6 +237,7 @@ impl DeltaVoterBot {
 impl Bot for DeltaVoterBot {
     async fn setup(&mut self, ctx: &BotContext) -> Result<()> {
         self.adnet_url = ctx.execution.network.adnet_unified.clone();
+        self.identity = Some(ctx.identity.clone());
         Ok(())
     }
     async fn execute_behavior(&mut self, behavior_id: &str) -> Result<BehaviorResult> {
@@ -262,23 +246,63 @@ impl Bot for DeltaVoterBot {
             "governance.delta.vote" => {
                 let resp = client.get_governance_proposals().await?;
                 let proposals = resp.proposals.unwrap_or_default();
-                let active = proposals
+                let proposal_id = proposals
                     .iter()
-                    .filter(|p| p.get("status").and_then(|v| v.as_str()) == Some("active"))
-                    .count();
+                    .find(|p| p.get("status").and_then(|v| v.as_str()) == Some("active"))
+                    .and_then(|p| p.get("id").and_then(|v| v.as_u64()));
+                let Some(proposal_id) = proposal_id else {
+                    return Ok(BehaviorResult::success("no active proposals to vote on"));
+                };
+                let identity = self.identity.as_ref()
+                    .ok_or_else(|| BotError::NetworkError("no identity".into()))?;
+                // Message: proposal_id.to_le_bytes() (8) || b'Y' (VoteChoice::Yes)
+                let mut message = Vec::with_capacity(9);
+                message.extend_from_slice(&proposal_id.to_le_bytes());
+                message.push(b'Y');
+                let sig = identity.sign(&message)?;
+                let vk = identity.verifying_key()?;
+                let vote_body = json!({
+                    "voter_public_key": hex::encode(vk.as_bytes()),
+                    "vote": "yes",
+                    "signature": hex::encode(sig.to_bytes()),
+                });
+                let tally = client.submit_governance_vote(proposal_id, &vote_body).await?;
                 Ok(BehaviorResult::success(format!(
-                    "delta governance checked: {active} active proposals"
+                    "voted yes on proposal #{proposal_id}: yes={:?}",
+                    tally.get("yes")
                 )))
             }
             "governance.delta.emphatic_vote" => {
-                // GET oracle prices as proxy for delta chain health check
-                let prices: serde_json::Value = client
-                    .get_json("/api/v1/oracle/prices")
-                    .await
-                    .unwrap_or(serde_json::json!({}));
+                // Vote yes on every active proposal (emphatic = covers all active)
+                let resp = client.get_governance_proposals().await?;
+                let proposals = resp.proposals.unwrap_or_default();
+                let active_ids: Vec<u64> = proposals.iter()
+                    .filter(|p| p.get("status").and_then(|v| v.as_str()) == Some("active"))
+                    .filter_map(|p| p.get("id").and_then(|v| v.as_u64()))
+                    .collect();
+                if active_ids.is_empty() {
+                    return Ok(BehaviorResult::success("no active proposals for emphatic vote"));
+                }
+                let identity = self.identity.as_ref()
+                    .ok_or_else(|| BotError::NetworkError("no identity".into()))?;
+                let mut voted = 0usize;
+                for pid in &active_ids {
+                    let mut message = Vec::with_capacity(9);
+                    message.extend_from_slice(&pid.to_le_bytes());
+                    message.push(b'Y');
+                    if let (Ok(sig), Ok(vk)) = (identity.sign(&message), identity.verifying_key()) {
+                        let body = json!({
+                            "voter_public_key": hex::encode(vk.as_bytes()),
+                            "vote": "yes",
+                            "signature": hex::encode(sig.to_bytes()),
+                        });
+                        if client.submit_governance_vote(*pid, &body).await.is_ok() {
+                            voted += 1;
+                        }
+                    }
+                }
                 Ok(BehaviorResult::success(format!(
-                    "delta emphatic check: oracle has {} pairs",
-                    prices.as_object().map(|o| o.len()).unwrap_or(0)
+                    "emphatic: voted yes on {voted}/{} proposals", active_ids.len()
                 )))
             }
             "governance.delta.auto_disenroll" => {
