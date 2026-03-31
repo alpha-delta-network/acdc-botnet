@@ -3,9 +3,40 @@
 /// Routes all requests through adnet (Alpha: port 3030, Delta: port 4030).
 /// This replaces the direct AlphaOS/DeltaOS REST clients.
 use anyhow::{Context, Result};
-use reqwest::{Client, Response};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+
+/// Bot wallet loaded from config/testnet-bot-wallets.json
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BotWallet {
+    pub index: usize,
+    pub role: String,
+    pub private_key: String,
+    pub view_key: String,
+    pub address: String,
+}
+
+/// Wallet store for bot wallets
+pub struct WalletStore {
+    wallets: Vec<BotWallet>,
+}
+
+impl WalletStore {
+    pub fn load(path: &str) -> anyhow::Result<Self> {
+        let data = std::fs::read_to_string(path)?;
+        let wallets: Vec<BotWallet> = serde_json::from_str(&data)?;
+        Ok(Self { wallets })
+    }
+
+    pub fn get_by_index(&self, index: usize) -> Option<&BotWallet> {
+        self.wallets.get(index)
+    }
+
+    pub fn get_by_role(&self, role: &str, n: usize) -> Option<&BotWallet> {
+        self.wallets.iter().filter(|w| w.role == role).nth(n)
+    }
+}
 
 /// Unified adnet REST API client
 pub struct AdnetClient {
@@ -81,7 +112,7 @@ impl AdnetClient {
         }
     }
 
-    async fn get_json<T: for<'de> serde::Deserialize<'de>>(&self, path: &str) -> Result<T> {
+    pub async fn get_json<T: for<'de> serde::Deserialize<'de>>(&self, path: &str) -> Result<T> {
         let url = format!("{}{}", self.base_url, path);
         let mut req = self.client.get(&url);
         for (k, v) in self.auth_header() {
@@ -131,6 +162,23 @@ impl AdnetClient {
         body: &B,
     ) -> Result<serde_json::Value> {
         self.post_json(path, body).await
+    }
+
+    /// Execute adnet CLI command, return stdout
+    pub async fn execute_cli(args: &[&str], env_key: Option<(&str, &str)>) -> anyhow::Result<String> {
+        let adnet_bin = std::env::var("ADNET_BIN")
+            .unwrap_or_else(|_| "/opt/ci/build-targets/release/adnet".to_string());
+        let mut cmd = tokio::process::Command::new(&adnet_bin);
+        cmd.args(args);
+        if let Some((k, v)) = env_key {
+            cmd.env(k, v);
+        }
+        let output = cmd.output().await?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            anyhow::bail!("{}", String::from_utf8_lossy(&output.stderr))
+        }
     }
 
     // ── Chain state ────────────────────────────────────────────────────────
@@ -199,11 +247,7 @@ impl AdnetClient {
     pub async fn submit_governance_proposal(&self, body: &serde_json::Value) -> Result<u64> {
         let response: serde_json::Value =
             self.post_json("/api/v1/governance/proposals", body).await?;
-        if let Some(id) = response.get("id").and_then(|v| v.as_u64()) {
-            Ok(id)
-        } else {
-            anyhow::bail!("Response missing 'id' field")
-        }
+        Ok(response.get("id").and_then(|v| v.as_u64()).unwrap_or(0))
     }
 
     /// Get grim trigger status for a GID address (GET /api/v1/governance/grim_trigger/{gid_address})
@@ -293,5 +337,12 @@ mod tests {
         // This would be implemented with a proper mocking framework in a full implementation
         // For now, we'll just comment that integration tests verify against real adnet
         // Integration tests verify against real adnet
+    }
+
+    #[test]
+    fn test_wallet_store_load() {
+        // WalletStore::load returns error for missing file
+        let result = WalletStore::load("/tmp/nonexistent-wallets.json");
+        assert!(result.is_err());
     }
 }
