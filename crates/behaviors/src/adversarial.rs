@@ -6,10 +6,10 @@ pub mod mev;
 pub mod privacy;
 pub mod resource;
 
-// Re-export key attacks
+// Re-export key attacks (names match actual struct names in each file)
 pub use byzantine::{CensorshipAttack, Equivocation, InvalidBlockProposal};
-pub use cross_chain::{DoubleSpendAttack, FinalityBypass, ReplayAttack};
-pub use governance::{FlashLoanGovernance, ProposalSpam, SybilAttack};
-pub use mev::{FrontRunning, LiquidationSniping, SandwichAttack};
-pub use privacy::{AmountMatching, TimingCorrelation};
-pub use resource::{MempoolSpam, StorageBomb};
+pub use cross_chain::{BridgeMismatchAttack, DoubleSpendAttack, ReplayAttack};
+pub use governance::{GrimTriggerAbuse, MaliciousProposal};
+pub use mev::{MevFrontRunning, SandwichAttack};
+pub use privacy::{LinkabilityAttack, NullifierReuse};
+pub use resource::{MempoolFlood, StorageExhaustion};

@@ -1,0 +1,214 @@
+# Gauntlet-Light Phase 6 — Security / Adversarial
+# Duration: 50 minutes, 24 epochs, parallel with Phase 5
+# Bots: AdversarialBot(5)
+# UC coverage: ~35 of 43 from full TN006
+# ALL 8 attack vectors covered — attacks 5-8 run sequentially from bot adv-04
+# CRITICAL: failures here escalate to human immediately
+
+id: gauntlet_light_phase_6
+name: "Security / Adversarial"
+version: "1.0.0"
+phase: 6
+duration_minutes: 50
+epochs: 24
+parallel_with: phase_5
+fail_action: log_and_escalate
+
+escalation:
+  critical_failures: [P6L-ADV-001a, P6L-ADV-002a, P6L-ADV-002b, P6L-ADV-002c, P6L-ADV-002d]
+  escalate_to: human
+  note: "Phase 6 critical failures must not be auto-continued — full audit required"
+
+bots:
+  - role: AdversarialBot
+    id: "adv-00"
+    attack: equivocation
+    start_offset_seconds: 5
+  - role: AdversarialBot
+    id: "adv-01"
+    attack: invalid_zk_proof
+    start_offset_seconds: 10
+  - role: AdversarialBot
+    id: "adv-02"
+    attack: oracle_manipulation
+    start_offset_seconds: 15
+  - role: AdversarialBot
+    id: "adv-03"
+    attack: mempool_dos
+    start_offset_seconds: 20
+  - role: AdversarialBot
+    id: "adv-04"
+    attack: replay_mev_bridge_doublespend_sequential
+    start_offset_seconds: 25
+    note: "adv-04 executes attacks 5-8 sequentially: replay → mev → bridge_mismatch → double_spend"
+
+steps:
+  # ── PARALLEL ATTACKS (bots 0-3) ───────────────────────────────────────────
+  - id: "P6L-ADV1-EQUIVOCATION"
+    name: "Attack 1: Equivocation (double-signing)"
+    action: run_attack
+    bot: "adv-00"
+    behavior: "attack.execute"
+    expected_outcome: "equivocating_validator_ejected"
+    timeout_seconds: 120
+    assertions:
+      - id: "P6L-ADV-001"
+        check: "equivocating_validator_ejected_within_2_blocks"
+        severity: critical
+      - id: "P6L-ADV-001a"
+        check: "no_invalid_state_accepted_alpha"
+        severity: critical
+        escalate_on_fail: true
+
+  - id: "P6L-ADV2-INVALID-ZK"
+    name: "Attack 2: Invalid ZK proof submission"
+    action: run_attack
+    bot: "adv-01"
+    behavior: "attack.execute"
+    expected_outcome: "invalid_proof_rejected"
+    timeout_seconds: 90
+    assertions:
+      - id: "P6L-ADV-002"
+        check: "invalid_zk_proofs_rejected_100pct"
+        severity: critical
+      - id: "P6L-ADV-002a"
+        check: "prover_penalized_for_invalid_proof"
+        severity: critical
+        escalate_on_fail: true
+
+  - id: "P6L-ADV3-ORACLE-MANIP"
+    name: "Attack 3: Oracle price manipulation (extreme values)"
+    action: run_attack
+    bot: "adv-02"
+    behavior: "attack.execute"
+    expected_outcome: "oracle_outlier_trimmed"
+    timeout_seconds: 90
+    assertions:
+      - id: "P6L-ADV-003"
+        check: "oracle_outlier_rejected_by_trimmed_mean"
+        severity: high
+      - id: "P6L-ADV-003a"
+        check: "harmonic_mean_unaffected_by_extreme_submission"
+        severity: high
+
+  - id: "P6L-ADV4-MEMPOOL-DOS"
+    name: "Attack 4: Mempool DoS (transaction flood)"
+    action: run_attack
+    bot: "adv-03"
+    behavior: "attack.execute"
+    expected_outcome: "rate_limited"
+    timeout_seconds: 120
+    assertions:
+      - id: "P6L-ADV-004"
+        check: "mempool_dos_does_not_stall_block_production_more_than_1_block"
+        severity: high
+      - id: "P6L-ADV-004a"
+        check: "rate_limiting_applied_to_flood_source"
+        severity: medium
+
+  # ── SEQUENTIAL ATTACKS (bot adv-04) ──────────────────────────────────────
+  - id: "P6L-ADV5-REPLAY"
+    name: "Attack 5: Replay previously confirmed Alpha tx"
+    action: run_attack_sequential
+    bot: "adv-04"
+    behavior: "attack.replay"
+    expected_outcome: "nullifier_prevents"
+    timeout_seconds: 90
+    assertions:
+      - id: "P6L-ADV-005"
+        check: "replay_rejected_by_nullifier"
+        severity: high
+
+  - id: "P6L-ADV6-MEV"
+    name: "Attack 6: MEV extraction on DEX batch"
+    action: run_attack_sequential
+    bot: "adv-04"
+    behavior: "attack.mev"
+    expected_outcome: "zero_profit"
+    timeout_seconds: 90
+    assertions:
+      - id: "P6L-ADV-006"
+        check: "mev_extraction_yields_zero_profit_advantage"
+        severity: high
+        detail: "uniform clearing price eliminates MEV opportunity"
+
+  - id: "P6L-ADV7-BRIDGE-MISMATCH"
+    name: "Attack 7: Bridge mismatch injection"
+    action: run_attack_sequential
+    bot: "adv-04"
+    behavior: "attack.bridge_mismatch"
+    expected_outcome: "bridge_shutdown"
+    timeout_seconds: 90
+    assertions:
+      - id: "P6L-ADV-007"
+        check: "bridge_mismatch_auto_detected"
+        severity: critical
+      - id: "P6L-ADV-007a"
+        check: "bridge_shutdown_on_mismatch"
+        severity: critical
+
+  - id: "P6L-ADV8-DOUBLE-SPEND"
+    name: "Attack 8: Double-spend on Alpha UTXO"
+    action: run_attack_sequential
+    bot: "adv-04"
+    behavior: "attack.double_spend"
+    expected_outcome: "zk_circuit_rejects"
+    timeout_seconds: 90
+    assertions:
+      - id: "P6L-ADV-008"
+        check: "double_spend_rejected_by_zk_circuit"
+        severity: critical
+      - id: "P6L-ADV-008a"
+        check: "utxo_set_unmodified"
+        severity: critical
+
+  # ── SAFE MODE ─────────────────────────────────────────────────────────────
+  - id: "P6L-SAFE-MODE"
+    name: "Safe Mode: trigger via Delta governance vote"
+    action: run_safe_mode_test
+    trigger: "delta_governance"
+    timeout_seconds: 120
+    assertions:
+      - id: "P6L-SM-001"
+        check: "safe_mode_activates_on_trigger"
+        severity: high
+      - id: "P6L-SM-002"
+        check: "safe_mode_clears_after_resolution"
+        severity: high
+
+  - id: "P6L-EPOCH-WAIT"
+    name: "Wait for epoch 24"
+    action: wait_for_epoch
+    target_epoch: 24
+    timeout_seconds: 600
+
+pass_criteria:
+  - id: "P6L-PASS-1"
+    check: "all_8_attacks_detected_and_neutralized"
+    severity: critical
+  - id: "P6L-PASS-2"
+    check: "no_invalid_state_accepted_either_chain"
+    severity: critical
+  - id: "P6L-PASS-3"
+    check: "equivocating_validator_ejected_within_2_blocks"
+    severity: critical
+  - id: "P6L-PASS-4"
+    check: "invalid_zk_rejected_100pct"
+    severity: critical
+  - id: "P6L-PASS-5"
+    check: "mempool_dos_max_1_block_stall"
+    severity: high
+  - id: "P6L-PASS-6"
+    check: "mev_yields_zero_profit"
+    severity: high
+
+on_pass:
+  - emit_metric: "gauntlet_phase_current" value: 6 labels: { run: "light" }
+  - log: "Phase 6 PASS — all adversarial attacks neutralized"
+  - artifact: "gauntlet-light-phase-6-{timestamp}.yaml"
+
+on_critical_fail:
+  - log: "Phase 6 CRITICAL FAIL — security regression detected"
+  - action: escalate_human
+  - action: ABORT_ALL
+  - artifact: "gauntlet-light-phase-6-CRITICAL-FAIL-{timestamp}.yaml"

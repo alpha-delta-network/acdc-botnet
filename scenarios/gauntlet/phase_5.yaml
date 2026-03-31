@@ -1,0 +1,124 @@
+# Gauntlet-Light Phase 5 — DEX + Oracle
+# Duration: 35 minutes, 17 epochs, sequential (parallel with Phase 6)
+# Bots: TraderBot(15) + AtomicSwapBot(2) + OracleBot(1)
+# UC coverage: ~20 of 30 from full TN006
+# Note: perpetuals (D005) skipped (feature-gated, post-launch)
+
+id: gauntlet_light_phase_5
+name: "DEX + Oracle"
+version: "1.0.0"
+phase: 5
+duration_minutes: 35
+epochs: 17
+parallel_with: phase_6
+fail_action: log_and_continue
+
+bots:
+  - role: TraderBot
+    count: 15
+    start_offset_seconds: 0
+  - role: AtomicSwapBot
+    count: 2
+    start_offset_seconds: 5
+  - role: OracleBot
+    count: 1
+    start_offset_seconds: 0
+    fx_pairs: 10
+
+steps:
+  - id: "P5L-ORACLE-PRICES"
+    name: "Oracle: update 10 FX pair prices"
+    action: run_bot_behavior
+    bots: OracleBot
+    behavior: "oracle.submit_prices"
+    iterations: 3
+    timeout_seconds: 90
+    assertions:
+      - "P5L-OR-001: prices submitted for 10 FX pairs"
+      - "P5L-OR-002: harmonic mean computed"
+      - "P5L-OR-003: next-block rule: oracle price not usable in same block as trade"
+
+  - id: "P5L-DEX-BATCH"
+    name: "DEX: batch auction uniform clearing price"
+    action: run_bot_behavior
+    bots: TraderBot
+    behavior: "dex.spot_order"
+    iterations: 8
+    timeout_seconds: 120
+    assertions:
+      - "P5L-DEX-001: uniform clearing price across all fills in same block"
+      - "P5L-DEX-002: no MEV advantage from order ordering"
+
+  - id: "P5L-DEX-LIMIT"
+    name: "DEX: limit order lifecycle"
+    action: run_bot_behavior
+    bots: TraderBot
+    behavior: "dex.limit_order"
+    iterations: 5
+    timeout_seconds: 90
+    assertions:
+      - "P5L-DEX-003: limit orders placed, filled at correct price"
+
+  - id: "P5L-ORACLE-STALENESS"
+    name: "Oracle staleness test"
+    action: run_oracle_staleness_test
+    stale_after_epochs: 2
+    timeout_seconds: 180
+    assertions:
+      - "P5L-OR-004: stale oracle blocks new position opens"
+      - "P5L-OR-005: stale oracle allows existing position closes"
+
+  - id: "P5L-ATOMIC-KYT"
+    name: "Atomic swap: KYT pre-registration"
+    action: run_bot_behavior
+    bots: AtomicSwapBot
+    behavior: "atomicswap.kyt_register"
+    timeout_seconds: 30
+    assertions:
+      - "P5L-AS-001: KYT pre-registration enforced before swap"
+
+  - id: "P5L-ATOMIC-HTLC-COMPLETE"
+    name: "Atomic swap: HTLC complete path"
+    action: run_bot_sequence
+    bots: AtomicSwapBot
+    behaviors: ["atomicswap.htlc_initiate", "atomicswap.htlc_complete"]
+    timeout_seconds: 120
+    assertions:
+      - "P5L-AS-002: HTLC initiated with timelock"
+      - "P5L-AS-003: HTLC completed with preimage"
+      - "P5L-AS-004: both sides receive funds"
+
+  - id: "P5L-ATOMIC-HTLC-REFUND"
+    name: "Atomic swap: HTLC refund path (timeout)"
+    action: run_bot_sequence
+    bots: AtomicSwapBot
+    behaviors: ["atomicswap.htlc_initiate", "atomicswap.htlc_refund"]
+    timeout_seconds: 120
+    assertions:
+      - "P5L-AS-005: HTLC refund after timeout"
+      - "P5L-AS-006: initiator refunded after lock period"
+
+  - id: "P5L-EPOCH-WAIT"
+    name: "Wait for epoch 17"
+    action: wait_for_epoch
+    target_epoch: 17
+    timeout_seconds: 500
+
+pass_criteria:
+  - id: "P5L-PASS-1"
+    check: "uniform_price_all_fills_same_block"
+  - id: "P5L-PASS-2"
+    check: "oracle_staleness_blocks_opens"
+  - id: "P5L-PASS-3"
+    check: "next_block_rule_prevents_advantage"
+  - id: "P5L-PASS-4"
+    check: "htlc_complete_path_works"
+  - id: "P5L-PASS-5"
+    check: "htlc_refund_path_works"
+  - id: "P5L-PASS-6"
+    check: "kyt_preregistration_enforced"
+
+on_pass:
+  - emit_metric: "gauntlet_phase_current" value: 5 labels: { run: "light" }
+  - log: "Phase 5 PASS"
+  - artifact: "gauntlet-light-phase-5-{timestamp}.yaml"

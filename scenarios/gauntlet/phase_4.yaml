@@ -1,0 +1,151 @@
+# Gauntlet-Light Phase 4 — Role Lifecycle
+# Duration: 25 minutes, 12 epochs, sequential
+# Bots: ValidatorBot(5) + ProverBot(1) + TechRepBot(3) + EarnInBot(4)
+# UC coverage: ~35 of 60 from full TN006
+# Note: no shadow validators — shadow-to-active tests skipped
+
+id: gauntlet_light_phase_4
+name: "Role Lifecycle"
+version: "1.0.0"
+phase: 4
+duration_minutes: 25
+epochs: 12
+fail_action: log_and_continue
+
+bots:
+  - role: ValidatorBot
+    count: 5
+    start_offset_seconds: 0
+    shadow: false
+  - role: ProverBot
+    count: 1
+    start_offset_seconds: 0
+  - role: TechRepBot
+    count: 3
+    start_offset_seconds: 5
+  - role: EarnInBot
+    count: 4
+    start_offset_seconds: 10
+    expected_success: [0, 1, 2]
+    expected_fail: [3]
+
+steps:
+  - id: "P4L-VAL-REGISTER"
+    name: "Validator registration (5 active validators)"
+    action: run_bot_behavior
+    bots: ValidatorBot
+    behavior: "validator.register"
+    timeout_seconds: 60
+    assertions:
+      - "P4L-VL-001: all 5 active validators registered"
+      - "P4L-VL-002: no shadow validators registered"
+
+  - id: "P4L-PROVER-REGISTER"
+    name: "Prover-01 registration (testnet006)"
+    action: run_bot_behavior
+    bots: ProverBot
+    behavior: "prover.register"
+    timeout_seconds: 30
+    assertions:
+      - "P4L-PV-001: prover-01 registered"
+
+  - id: "P4L-ROTATION-1"
+    name: "First rotation boundary (epoch 7)"
+    action: wait_for_epoch
+    target_epoch: 7
+    verify_rotation: true
+    timeout_seconds: 300
+    assertions:
+      - "P4L-RT-001: rotation fires at exact epoch 7 boundary"
+      - "P4L-RT-002: VRF proof verifiable"
+      - "P4L-RT-003: governor quota 25% maintained"
+
+  - id: "P4L-VAL-ATTEST"
+    name: "Validator block attestation"
+    action: run_bot_behavior
+    bots: ValidatorBot
+    behavior: "validator.attest"
+    iterations: 10
+    timeout_seconds: 120
+    assertions:
+      - "P4L-VL-003: all 5 validators attesting blocks"
+
+  - id: "P4L-PROVER-PROOF"
+    name: "Prover ZK proof submission"
+    action: run_bot_behavior
+    bots: ProverBot
+    behavior: "prover.submit_proof"
+    iterations: 5
+    timeout_seconds: 60
+    assertions:
+      - "P4L-PV-002: prover submitting valid ZK proofs"
+
+  - id: "P4L-EARNIN-APPLY"
+    name: "Earn-in: 4 candidates apply (3 will succeed, 1 will fail)"
+    action: run_bot_behavior
+    bots: EarnInBot
+    behavior: "earnin.apply"
+    timeout_seconds: 60
+    assertions:
+      - "P4L-EI-001: 4 earn-in applications submitted"
+
+  - id: "P4L-EARNIN-HOLD"
+    name: "Earn-in: hold period (compressed — 12 epochs)"
+    action: wait_for_epoch
+    target_epoch: 12
+    verify_earnin_status: true
+    timeout_seconds: 420
+    assertions:
+      - "P4L-EI-002: earn-in hold period respected"
+
+  - id: "P4L-EARNIN-COMPLETE"
+    name: "Earn-in: 3 complete, 1 fails"
+    action: run_bot_behavior
+    bots: EarnInBot
+    behavior: "earnin.complete"
+    timeout_seconds: 60
+    assertions:
+      - "P4L-EI-003: 3 earn-in completions succeed"
+      - "P4L-EI-004: 1 earn-in fails as expected"
+      - "P4L-EI-005: nullifier prevents re-enrollment for failed candidate"
+
+  - id: "P4L-ROTATION-2"
+    name: "Second rotation boundary"
+    action: verify_rotation_occurred
+    expected_epoch_mod: 7
+    timeout_seconds: 120
+    assertions:
+      - "P4L-RT-004: second rotation at epoch-7 boundary"
+
+  - id: "P4L-REWARDS"
+    name: "Validator + prover reward claims"
+    action: run_bot_behavior_multi
+    behaviors:
+      - { bots: ValidatorBot, behavior: "validator.claim_rewards" }
+      - { bots: ProverBot, behavior: "prover.claim_rewards" }
+    timeout_seconds: 60
+    assertions:
+      - "P4L-RW-001: validator rewards claimed"
+      - "P4L-RW-002: prover rewards claimed"
+
+pass_criteria:
+  - id: "P4L-PASS-1"
+    check: "rotation_at_epoch_7_boundaries"
+    detail: "2 rotation boundaries observed"
+  - id: "P4L-PASS-2"
+    check: "vrf_proofs_verifiable"
+  - id: "P4L-PASS-3"
+    check: "governor_quota_25pct_maintained"
+  - id: "P4L-PASS-4"
+    check: "earnin_3_succeed_1_fail"
+  - id: "P4L-PASS-5"
+    check: "nullifier_prevents_reenrollment"
+  - id: "P4L-PASS-6"
+    check: "no_shadow_validators_registered"
+    detail: "light topology: all validators active, none shadow"
+
+on_pass:
+  - emit_metric: "gauntlet_phase_current" value: 4 labels: { run: "light" }
+  - log: "Phase 4 PASS"
+  - artifact: "gauntlet-light-phase-4-{timestamp}.yaml"
+  - next_phase: 5

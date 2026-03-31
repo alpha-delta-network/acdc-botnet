@@ -1,0 +1,142 @@
+# Gauntlet-Light Phase 3 — Economic Simulation
+# Duration: 50 minutes, 25 epochs, sequential
+# Bots: TraderBot(15) + OracleBot(1)
+# UC coverage: ~28 of 40 from full TN006
+
+id: gauntlet_light_phase_3
+name: "Economic Simulation"
+version: "1.0.0"
+phase: 3
+duration_minutes: 50
+epochs: 25
+fail_action: log_and_continue
+
+bots:
+  - role: TraderBot
+    count: 15
+    start_offset_seconds: 0
+  - role: OracleBot
+    count: 1
+    start_offset_seconds: 0
+    fx_pairs: 10
+
+steps:
+  - id: "P3L-ORACLE-INIT"
+    name: "Oracle: submit initial FX prices (10 pairs)"
+    action: run_bot_behavior
+    bots: OracleBot
+    behavior: "oracle.submit_prices"
+    timeout_seconds: 60
+    assertions:
+      - "P3L-OR-001: 10 FX pairs submitted"
+      - "P3L-OR-002: harmonic mean computed correctly"
+      - "P3L-OR-003: AX/XAU = 0.35 / harmonic_mean"
+
+  - id: "P3L-FEE-ALPHA"
+    name: "Alpha fee formula verification"
+    action: verify_fee_formula
+    chain: alpha
+    expected:
+      formula: "governor_scaled"
+      tolerance_microcredits: 1
+    timeout_seconds: 60
+    assertions:
+      - "P3L-FE-001: Alpha fee within 1 microcredit tolerance"
+
+  - id: "P3L-FEE-DELTA"
+    name: "Delta fee formula verification (4-tier)"
+    action: verify_fee_formula
+    chain: delta
+    expected:
+      tiers: 4
+    timeout_seconds: 60
+    assertions:
+      - "P3L-FE-002: Delta 4-tier fee model correct"
+
+  - id: "P3L-DEX-ORDERS"
+    name: "DEX: batch auction orders (15 traders)"
+    action: run_bot_behavior
+    bots: TraderBot
+    behavior: "dex.spot_order"
+    iterations: 5
+    timeout_seconds: 120
+    assertions:
+      - "P3L-DEX-001: orders placed"
+      - "P3L-DEX-002: batch auction produces uniform clearing price"
+      - "P3L-DEX-003: uniform price across all fills in same block"
+
+  - id: "P3L-CASCADE"
+    name: "Epoch cascade verification (23/77 split)"
+    action: verify_epoch_cascade
+    expected:
+      infra_share: 0.23
+      cascade_share: 0.77
+      conservation: "infra + cascade + dividends == total_revenue"
+    timeout_seconds: 180
+    assertions:
+      - "P3L-CS-001: cascade conservation holds"
+      - "P3L-CS-002: infra 23% exact"
+      - "P3L-CS-003: insurance fund fills to target before dividend overflow"
+      - "P3L-CS-004: treasury fills to target"
+
+  - id: "P3L-TWAP"
+    name: "TWAP 25-epoch fill + treasury buyback"
+    action: wait_for_epoch_range
+    start_epoch: 12
+    end_epoch: 25
+    verify_at_epoch_25:
+      - "twap_25_epoch_filled"
+      - "treasury_buyback_price_formula_verified"
+    timeout_seconds: 900
+    assertions:
+      - "P3L-TB-001: TWAP fills over 25 epochs"
+      - "P3L-TB-002: buyback price matches formula after TWAP"
+
+  - id: "P3L-DX-REWARDS"
+    name: "DX reward eligibility (binary)"
+    action: verify_dx_rewards
+    expected:
+      eligibility: binary
+    timeout_seconds: 60
+    assertions:
+      - "P3L-DR-001: DX rewards binary eligibility enforced"
+      - "P3L-DR-002: DX never burned (total supply constant)"
+
+  - id: "P3L-DX-CAP"
+    name: "DX wallet cap enforcement (25k per seed)"
+    action: verify_dx_cap
+    expected:
+      cap_per_seed: 25000
+    timeout_seconds: 60
+    assertions:
+      - "P3L-DC-001: DX cap 25k enforced per seed"
+
+  - id: "P3L-ORACLE-STALENESS"
+    name: "Oracle staleness: blocks new opens, allows closes"
+    action: run_bot_behavior
+    bots: OracleBot
+    behavior: "oracle.verify_staleness"
+    timeout_seconds: 60
+    assertions:
+      - "P3L-OR-004: stale oracle blocks new position opens"
+      - "P3L-OR-005: stale oracle allows existing position closes"
+
+pass_criteria:
+  - id: "P3L-PASS-1"
+    check: "alpha_fee_within_tolerance"
+  - id: "P3L-PASS-2"
+    check: "cascade_conservation_holds"
+  - id: "P3L-PASS-3"
+    check: "dx_supply_constant"
+  - id: "P3L-PASS-4"
+    check: "treasury_buyback_verified_after_twap"
+  - id: "P3L-PASS-5"
+    check: "dx_cap_25k_enforced"
+  - id: "P3L-PASS-6"
+    check: "uniform_clearing_price"
+
+on_pass:
+  - emit_metric: "gauntlet_phase_current" value: 3 labels: { run: "light" }
+  - log: "Phase 3 PASS"
+  - artifact: "gauntlet-light-phase-3-{timestamp}.yaml"
+  - next_phase: 4
