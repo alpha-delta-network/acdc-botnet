@@ -89,7 +89,8 @@ impl AdnetClient {
     ///
     /// `base_url` should be the adnet API URL, e.g. `https://testnet.ac-dc.network:3030`
     pub fn new(base_url: String) -> Result<Self> {
-        Self::with_api_key(base_url, None)
+        let api_key = std::env::var("ADNET_API_KEY").ok().filter(|k| !k.is_empty());
+        Self::with_api_key(base_url, api_key)
     }
 
     pub fn with_api_key(base_url: String, api_key: Option<String>) -> Result<Self> {
