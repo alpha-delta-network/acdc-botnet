@@ -1,0 +1,69 @@
+# Gauntlet-Light Phase 9 — Mainnet Readiness Gate
+# Duration: 15 minutes, sequential (after phases 0-6 complete)
+# No bots — aggregation and MECE validation only
+
+id: gauntlet_light_phase_9
+name: "Mainnet Readiness Gate"
+version: "1.0.0"
+phase: 9
+duration_minutes: 15
+epochs: 0
+fail_action: gate_decision
+
+steps:
+  - id: "P9L-AGGREGATE"
+    name: "Aggregate all phase assertions"
+    action: aggregate_phase_results
+    phases: [0, 1, 2, 3, 4, 5, 6]
+    timeout_seconds: 60
+
+  - id: "P9L-MECE"
+    name: "TN004 MECE validation (light assertion registry)"
+    action: run_tn004_mece_validation
+    assertion_registry: "gauntlet-light-assertions.jsonl"
+    expected_uc_coverage: 223
+    timeout_seconds: 300
+
+  - id: "P9L-SUPPLY-FINAL"
+    name: "Final DX supply invariant check"
+    action: verify_chain_invariants
+    checks:
+      - "dx_total_supply_unchanged_from_genesis"
+      - "bridge_locked_ax_equals_minted_sax"
+    timeout_seconds: 30
+
+  - id: "P9L-REPORT"
+    name: "Generate final report"
+    action: generate_report
+    formats: [yaml, markdown]
+    outputs:
+      - "gauntlet-light-final-report.yaml"
+      - "gauntlet-light-final-report.md"
+    timeout_seconds: 60
+
+gate_decision:
+  green:
+    condition: "all_phases_pass AND mece_coverage >= 0.95"
+    verdict: "LIGHT GATE CLEAR"
+    note: "Light gauntlet passed. Full TN006 (Phases 7-8) required before mainnet."
+  yellow:
+    condition: "all_phases_pass AND 0.85 <= mece_coverage < 0.95"
+    verdict: "LIGHT GATE CONDITIONAL"
+    note: "Review uncovered UCs. Waiver required to proceed."
+  red:
+    condition: "any_phase_fails"
+    verdict: "LIGHT GATE FAIL — do not proceed"
+  red_critical:
+    condition: "phase_6_fails"
+    verdict: "SECURITY REGRESSION — full audit required before any further testing"
+
+on_green:
+  - emit_metric: "gauntlet_light_result" value: 1 labels: { verdict: "clear" }
+  - log: "LIGHT GATE CLEAR — testnet001-005 + prover-01 cluster validated"
+  - artifact: "gauntlet-light-final-report.yaml"
+  - artifact: "gauntlet-light-final-report.md"
+
+on_red:
+  - emit_metric: "gauntlet_light_result" value: 0 labels: { verdict: "fail" }
+  - log: "LIGHT GATE FAIL"
+  - artifact: "gauntlet-light-final-report-FAIL.yaml"

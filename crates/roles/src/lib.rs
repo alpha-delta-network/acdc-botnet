@@ -7,7 +7,7 @@ pub mod governor;
 pub mod trader;
 
 // Re-export common types
-pub use gauntlet_bots::{
+pub use gauntlet_bots::{LightFleet, 
     AdversarialAttack, AdversarialBot, AtomicSwapBot, BridgeBot, DeadWalletBot, DeltaVoterBot,
     EarnInBot, GauntletFleet, GauntletGovernorBot, MessengerBot, OracleBot, ProverBot, ScannerBot,
     TechRepBot, UserTransactorBot, ValidatorBot,

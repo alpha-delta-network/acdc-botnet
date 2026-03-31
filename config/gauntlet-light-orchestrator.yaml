@@ -1,0 +1,66 @@
+# Gauntlet-Light Orchestrator Configuration
+# Coordinator: testnet006.ac-dc.network (GPU server, 8 CPU, 62GB RAM, RTX 6000 Ada)
+# Purpose: TN006-LIGHT — 66-bot fleet coordinator for 7-server light gauntlet
+
+coordinator:
+  host: "testnet006.ac-dc.network"
+  bind_addr: "0.0.0.0:50051"
+  ssh_port: 2584
+  ssh_user: devops
+  prometheus_bind: "0.0.0.0:9090"
+  log_level: "info"
+  max_bots_per_worker: 20
+  heartbeat_interval_seconds: 5
+  worker_timeout_seconds: 30
+  checkpoint_interval_seconds: 60
+
+workers:
+  # testnet006 also runs as worker-0 for light bots (GPU prover shares server)
+  - id: "worker-0"
+    host: "testnet006.ac-dc.network"
+    grpc_port: 50052
+    ssh_port: 2584
+    max_bots: 20
+    bot_types: [ProverBot, OracleBot, ScannerBot, AdversarialBot]
+    note: "Co-located with coordinator; GPU used for ZK proving"
+
+  # ci.ac-dc.network as worker-1 (48 CPUs, 94GB RAM)
+  - id: "worker-1"
+    host: "ci.ac-dc.network"
+    grpc_port: 50052
+    ssh_port: 2584
+    max_bots: 46
+    bot_types: [UserTransactor, GovernorBot, DeltaVoterBot, ValidatorBot, TechRepBot, TraderBot, EarnInBot, AtomicSwapBot, BridgeBot]
+
+# Total capacity: 20 + 46 = 66 bots
+
+network_endpoints:
+  # Primary API endpoint — load balanced across testnet001-005
+  adnet_unified: "${ADNET_URL:-http://testnet001.ac-dc.network:3000}"
+  alpha_api:     "${ALPHA_API_URL:-http://testnet001.ac-dc.network:3030}"
+  delta_api:     "${DELTA_API_URL:-http://testnet001.ac-dc.network:4030}"
+
+  # Per-validator endpoints (for direct validator health checks)
+  validators:
+    - { id: "val-00", host: "testnet001.ac-dc.network", alpha_port: 3030, delta_port: 4030 }
+    - { id: "val-01", host: "testnet002.ac-dc.network", alpha_port: 3030, delta_port: 4030 }
+    - { id: "val-02", host: "testnet003.ac-dc.network", alpha_port: 3030, delta_port: 4030 }
+    - { id: "val-03", host: "testnet004.ac-dc.network", alpha_port: 3030, delta_port: 4030 }
+    - { id: "val-04", host: "testnet005.ac-dc.network", alpha_port: 3030, delta_port: 4030 }
+
+  prover:
+    - { id: "prv-00", host: "testnet006.ac-dc.network", port: 4040, gpu: true }
+
+phase_gates:
+  # Coordinator enforces sequential phase progression
+  # Phase 0 ABORT propagates to all workers immediately
+  phase_0_fail_action: ABORT
+  phase_1_5_fail_action: "log_and_continue"
+  phase_6_critical_fail: "escalate_human"
+  phase_9_gate: "green_yellow_red"
+
+output:
+  artifacts_dir: "/tmp/gauntlet-light-output"
+  report_format: yaml
+  assertions_format: jsonl
+  bot_logs_format: json_line

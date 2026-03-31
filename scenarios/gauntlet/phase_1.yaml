@@ -1,0 +1,129 @@
+# Gauntlet-Light Phase 1 — Core Transactions + Cross-Chain
+# Duration: 25 minutes, 12 epochs, sequential
+# Bots: UserTransactor(10) + BridgeBot(4) + ScannerBot(1)
+# UC coverage: ~50 of 73 from full TN006
+
+id: gauntlet_light_phase_1
+name: "Core Transactions + Cross-Chain"
+version: "1.0.0"
+phase: 1
+duration_minutes: 25
+epochs: 12
+fail_action: log_and_continue
+
+bots:
+  - role: UserTransactorBot
+    count: 10
+    start_offset_seconds: 0
+    behavior_sequence:
+      - "transfer.ax_private"
+      - "query.balance"
+      - "transfer.ax_public"
+      - "query.balance"
+  - role: BridgeBot
+    count: 4
+    start_offset_seconds: 5
+    behavior_sequence:
+      - "bridge.lock_ax"
+      - "bridge.mint_sax"
+      - "bridge.burn_sax"
+      - "bridge.unlock_ax"
+  - role: ScannerBot
+    count: 1
+    start_offset_seconds: 0
+    behavior_sequence:
+      - "scanner.index_block"
+      - "scanner.verify_state"
+      - "scanner.query_history"
+
+steps:
+  - id: "P1L-AX-PRIVATE"
+    name: "Private AX transfers (10 bots x 5 txns)"
+    action: run_bot_behavior
+    bots: UserTransactorBot
+    behavior: "transfer.ax_private"
+    iterations: 5
+    expected:
+      success_rate_min: 1.0
+      confirmation_within_seconds: 30
+    timeout_seconds: 180
+    assertions:
+      - "P1L-AX-001: all transfers confirmed within 30s"
+      - "P1L-AX-002: ZK proofs generated for all private txns"
+
+  - id: "P1L-AX-PUBLIC"
+    name: "Public AX transfers"
+    action: run_bot_behavior
+    bots: UserTransactorBot
+    behavior: "transfer.ax_public"
+    iterations: 3
+    timeout_seconds: 90
+    assertions:
+      - "P1L-AX-003: public transfers confirmed"
+
+  - id: "P1L-BRIDGE-LOCK"
+    name: "Bridge: lock AX on Alpha (4 bots)"
+    action: run_bot_behavior
+    bots: BridgeBot
+    behavior: "bridge.lock_ax"
+    iterations: 2
+    timeout_seconds: 60
+    assertions:
+      - "P1L-BR-001: AX locked on Alpha chain"
+
+  - id: "P1L-BRIDGE-MINT"
+    name: "Bridge: mint sAX on Delta"
+    action: run_bot_behavior
+    bots: BridgeBot
+    behavior: "bridge.mint_sax"
+    timeout_seconds: 60
+    assertions:
+      - "P1L-BR-002: sAX minted on Delta"
+      - "P1L-BR-003: bridge_invariant locked_alpha == minted_sax"
+
+  - id: "P1L-BRIDGE-BURN"
+    name: "Bridge: burn sAX → unlock AX (full round-trip)"
+    action: run_bot_sequence
+    bots: BridgeBot
+    behaviors: ["bridge.burn_sax", "bridge.unlock_ax"]
+    timeout_seconds: 90
+    assertions:
+      - "P1L-BR-004: burn-unlock atomic (both chains or neither)"
+      - "P1L-BR-005: bridge_invariant still holds after round-trip"
+
+  - id: "P1L-SCANNER"
+    name: "Scanner indexing verification"
+    action: run_bot_behavior
+    bots: ScannerBot
+    behavior: "scanner.verify_state"
+    timeout_seconds: 60
+    assertions:
+      - "P1L-SC-001: scanner indexes match on-chain state"
+
+  - id: "P1L-EPOCH-WAIT"
+    name: "Wait for epoch 12 + balance checks"
+    action: wait_for_epoch
+    target_epoch: 12
+    check_interval_seconds: 30
+    verify_invariants:
+      - "dx_total_supply_constant"
+    timeout_seconds: 420
+
+pass_criteria:
+  - id: "P1L-PASS-1"
+    check: "all_ax_transfers_confirmed"
+    threshold: 1.0
+  - id: "P1L-PASS-2"
+    check: "bridge_invariant_holds"
+    detail: "locked_alpha == minted_sax at all times"
+  - id: "P1L-PASS-3"
+    check: "zk_proofs_verified"
+    detail: "all private transactions have valid ZK proofs"
+  - id: "P1L-PASS-4"
+    check: "scanner_state_consistent"
+
+on_pass:
+  - emit_metric: "gauntlet_phase_current" value: 1 labels: { run: "light" }
+  - log: "Phase 1 PASS"
+  - artifact: "gauntlet-light-phase-1-{timestamp}.yaml"
+  - next_phase: 2
