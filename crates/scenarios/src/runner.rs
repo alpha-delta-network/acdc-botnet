@@ -263,7 +263,7 @@ impl GauntletPhaseRunner {
     /// Run the gauntlet-light scenario (phases 0-6)
     pub async fn run_gauntlet_light(adnet_url: String) -> anyhow::Result<GauntletResult> {
         info!("Building LightFleet for gauntlet-light scenario");
-        let fleet = LightFleet::build();
+        let mut fleet = LightFleet::build();
         info!("LightFleet built with {} bots", fleet.bots.len());
 
         let mut phases = Vec::new();
@@ -271,7 +271,7 @@ impl GauntletPhaseRunner {
         let mut total_failed = 0;
 
         // Phase 0: Validators and Provers (ABORT on failure)
-        match Self::run_phase(0, &fleet, &adnet_url, FailAction::ABORT).await {
+        match Self::run_phase(0, &mut fleet, &adnet_url, FailAction::ABORT).await {
             Ok(result) => {
                 if result.passed {
                     total_passed += 1;
@@ -287,7 +287,7 @@ impl GauntletPhaseRunner {
 
         // Phases 1-6: Continue on failure
         for phase_num in 1..=6 {
-            match Self::run_phase(phase_num, &fleet, &adnet_url, FailAction::CONTINUE).await {
+            match Self::run_phase(phase_num, &mut fleet, &adnet_url, FailAction::CONTINUE).await {
                 Ok(result) => {
                     if result.passed {
                         total_passed += 1;
@@ -319,7 +319,7 @@ impl GauntletPhaseRunner {
     /// Run a single phase
     async fn run_phase(
         phase_num: u8,
-        fleet: &LightFleet,
+        fleet: &mut LightFleet,
         adnet_url: &str,
         fail_action: FailAction,
     ) -> anyhow::Result<PhaseResult> {
@@ -411,37 +411,44 @@ impl GauntletPhaseRunner {
 
         // Execute behaviors for each bot in the phase
         for (bot_type, index) in bot_indices {
-            let bot = fleet.get_bot(bot_type, index)?;
             let behaviors = Self::get_behaviors_for_phase(phase_num, bot_type, index)?;
+
+            // Resolve bot id and role before borrowing mutably for setup/execute
+            let (bot_id, bot_role) = {
+                let bot = fleet.get_bot_mut(bot_type, index)?;
+                (bot.id().to_string(), bot.role().to_string())
+            };
+
+            // Create bot context and call setup once per bot per phase
+            let context = Self::create_bot_context(&bot_id, &bot_role, adnet_url)?;
+            {
+                let bot = fleet.get_bot_mut(bot_type, index)?;
+                if let Err(e) = bot.setup(&context).await {
+                    all_errors.push(format!("Bot {} ({}) setup error: {}", bot_id, bot_type, e));
+                    continue;
+                }
+            }
 
             for behavior_name in behaviors {
                 total_behaviors += 1;
 
-                // Create bot context
-                let context = Self::create_bot_context(bot.id(), bot.role(), adnet_url)?;
-
                 // Execute behavior
-                match bot.execute_behavior(&behavior_name, &context).await {
+                let bot = fleet.get_bot_mut(bot_type, index)?;
+                match bot.execute_behavior(&behavior_name).await {
                     Ok(result) => {
                         if Self::is_behavior_successful(&result, phase_num, bot_type, index) {
                             successful_behaviors += 1;
                         } else {
                             all_errors.push(format!(
                                 "Bot {} ({}) behavior {} failed: {:?}",
-                                bot.id(),
-                                bot_type,
-                                behavior_name,
-                                result
+                                bot_id, bot_type, behavior_name, result
                             ));
                         }
                     }
                     Err(e) => {
                         all_errors.push(format!(
                             "Bot {} ({}) behavior {} execution error: {}",
-                            bot.id(),
-                            bot_type,
-                            behavior_name,
-                            e
+                            bot_id, bot_type, behavior_name, e
                         ));
                     }
                 }
@@ -605,11 +612,7 @@ impl GauntletPhaseRunner {
         let identity = IdentityGenerator::new().generate(bot_id.to_string())?;
         let wallet = Wallet::new(bot_id.to_string());
 
-        Ok(BotContext {
-            execution_context,
-            identity,
-            wallet,
-        })
+        Ok(BotContext::new(execution_context, identity, wallet))
     }
 
     /// Check if behavior result is successful
@@ -619,17 +622,11 @@ impl GauntletPhaseRunner {
         bot_type: &str,
         index: usize,
     ) -> bool {
-        match result {
-            BehaviorResult::Success { .. } => true,
-            BehaviorResult::Error { .. } => {
-                // Special case: Phase 4 earn_in index 3 expects failure
-                if phase_num == 4 && bot_type == "earn_in" && index == 3 {
-                    true // Expected failure counts as success
-                } else {
-                    false
-                }
-            }
-            BehaviorResult::Skipped { .. } => false,
+        if result.success {
+            true
+        } else {
+            // Special case: Phase 4 earn_in index 3 expects failure
+            phase_num == 4 && bot_type == "earn_in" && index == 3
         }
     }
 }
