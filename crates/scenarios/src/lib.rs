@@ -6,4 +6,4 @@ pub mod loader;
 pub mod runner;
 
 pub use loader::ScenarioLoader;
-pub use runner::{GauntletPhaseRunner, ScenarioRunner};
+pub use runner::{FleetType, GauntletPhaseRunner, PhaseResult, ScenarioRunner};
