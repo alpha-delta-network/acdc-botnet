@@ -1,0 +1,25 @@
+checks:
+- detail: 'OK (dry-run): sum(mint_limit)=1000000000 == total_ax=1000000000'
+  id: P0-2
+  name: Genesis invariants
+  status: PASS
+- detail: 'OK (dry-run): 5 active + 2 shadow validators configured'
+  id: P0-3
+  name: Validator topology
+  status: PASS
+- detail: 'OK (dry-run): 2 provers configured'
+  id: P0-4
+  name: Prover configuration
+  status: PASS
+- detail: 'OK (dry-run): epoch compression 120s (ratio 720:1)'
+  id: P0-5
+  name: Epoch compression (120s)
+  status: PASS
+- detail: 'OK: 169 bots configured'
+  id: P0-6
+  name: Bot fleet count (169)
+  status: PASS
+mode: dry_run
+phase: 0
+result: PASS
+timestamp: '2026-03-29T19:38:05.182644+00:00'

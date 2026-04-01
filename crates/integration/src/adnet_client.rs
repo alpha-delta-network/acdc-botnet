@@ -89,7 +89,9 @@ impl AdnetClient {
     ///
     /// `base_url` should be the adnet API URL, e.g. `https://testnet.ac-dc.network:3030`
     pub fn new(base_url: String) -> Result<Self> {
-        let api_key = std::env::var("ADNET_API_KEY").ok().filter(|k| !k.is_empty());
+        let api_key = std::env::var("ADNET_API_KEY")
+            .ok()
+            .filter(|k| !k.is_empty());
         Self::with_api_key(base_url, api_key)
     }
 
@@ -166,7 +168,10 @@ impl AdnetClient {
     }
 
     /// Execute adnet CLI command, return stdout
-    pub async fn execute_cli(args: &[&str], env_key: Option<(&str, &str)>) -> anyhow::Result<String> {
+    pub async fn execute_cli(
+        args: &[&str],
+        env_key: Option<(&str, &str)>,
+    ) -> anyhow::Result<String> {
         let adnet_bin = std::env::var("ADNET_BIN")
             .unwrap_or_else(|_| "/opt/ci/build-targets/release/adnet".to_string());
         let mut cmd = tokio::process::Command::new(&adnet_bin);
