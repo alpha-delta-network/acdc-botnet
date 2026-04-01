@@ -288,6 +288,50 @@ impl AdnetClient {
 
     // ── Slash evidence ─────────────────────────────────────────────────────
 
+    /// Get the balance for a Grumpkin address (GET /api/v1/addresses/{addr}/balance)
+    ///
+    /// `addr` is a 128-char hex-encoded GrumpkinAffine x‖y little-endian string.
+    /// Returns the `balance` field (u128) from the response.
+    pub async fn get_address_balance(&self, addr: &str) -> Result<u128> {
+        #[derive(Deserialize)]
+        struct BalanceResponse {
+            #[allow(dead_code)]
+            address: String,
+            balance: u128,
+            #[allow(dead_code)]
+            finality: String,
+            #[allow(dead_code)]
+            block_height: u64,
+            #[allow(dead_code)]
+            block_hash: String,
+        }
+
+        let path = format!("/api/v1/addresses/{}/balance", addr);
+        let resp: BalanceResponse = self.get_json(&path).await?;
+        Ok(resp.balance)
+    }
+
+    /// Finalize a governance proposal (POST /api/v1/governance/proposals/{id}/finalize)
+    ///
+    /// Posts an empty JSON body `{}` and returns `Ok(())` on any 2xx response.
+    pub async fn finalize_proposal(&self, proposal_id: u64) -> Result<()> {
+        let path = format!("/api/v1/governance/proposals/{}/finalize", proposal_id);
+        let url = format!("{}{}", self.base_url, path);
+        let mut req = self.client.post(&url);
+        for (k, v) in self.auth_header() {
+            req = req.header(k, v);
+        }
+        let response = req
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .context(format!("POST {}", path))?;
+        if !response.status().is_success() {
+            anyhow::bail!("POST {} returned {}", path, response.status());
+        }
+        Ok(())
+    }
+
     /// Submit slash evidence (POST /api/v1/validator/slash-evidence)
     pub async fn submit_slash_evidence(
         &self,
