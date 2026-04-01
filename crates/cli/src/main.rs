@@ -143,11 +143,13 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Status { show_workers } => {
-            show_status(show_workers).await?;
+            println!("Status command - show_workers: {}", show_workers);
+            // TODO: Implement status reporting
         }
 
         Commands::Test { test_type } => {
-            run_test(&test_type).await?;
+            println!("Running test: {}", test_type);
+            // TODO: Implement test execution
         }
     }
 

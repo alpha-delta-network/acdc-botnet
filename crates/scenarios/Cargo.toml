@@ -11,6 +11,7 @@ adnet-testbot = { path = "../bot" }
 adnet-testbot-roles = { path = "../roles" }
 adnet-testbot-behaviors = { path = "../behaviors" }
 adnet-testbot-metrics = { path = "../metrics" }
+adnet-testbot-integration = { path = "../integration" }
 
 # Async runtime
 tokio = { workspace = true }

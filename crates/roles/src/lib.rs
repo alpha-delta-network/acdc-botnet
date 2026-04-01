@@ -2,6 +2,7 @@ pub mod gauntlet_bots;
 /// Bot role implementations
 ///
 /// This module provides concrete bot roles that implement the Bot trait.
+pub mod gauntlet_bots;
 pub mod general_user;
 pub mod governor;
 pub mod trader;
