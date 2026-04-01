@@ -7,9 +7,9 @@
 //! Light fleet (66 bots): LightFleet::build() — testnet001-005 + testnet006
 
 use adnet_testbot::{BehaviorResult, Bot, BotContext, BotError, Identity, Result};
-use hex;
 use adnet_testbot_integration::AdnetClient;
 use async_trait::async_trait;
+use hex;
 use serde_json::json;
 
 // =============================================================================
@@ -142,7 +142,9 @@ impl Bot for GauntletGovernorBot {
                     .find(|p| p.get("status").and_then(|v| v.as_str()) == Some("active"))
                     .and_then(|p| p.get("id").and_then(|v| v.as_u64()))
                     .unwrap_or(1);
-                let identity = self.identity.as_ref()
+                let identity = self
+                    .identity
+                    .as_ref()
                     .ok_or_else(|| BotError::NetworkError("no identity".into()))?;
                 // Message: proposal_id.to_le_bytes() (8) || b'Y' (VoteChoice::Yes)
                 let mut message = Vec::with_capacity(9);
@@ -155,7 +157,9 @@ impl Bot for GauntletGovernorBot {
                     "vote": "yes",
                     "signature": hex::encode(sig.to_bytes()),
                 });
-                let tally = client.submit_governance_vote(proposal_id, &vote_body).await?;
+                let tally = client
+                    .submit_governance_vote(proposal_id, &vote_body)
+                    .await?;
                 Ok(BehaviorResult::success(format!(
                     "governor voted on proposal #{proposal_id}: yes={:?}",
                     tally.get("yes")
@@ -253,7 +257,9 @@ impl Bot for DeltaVoterBot {
                 let Some(proposal_id) = proposal_id else {
                     return Ok(BehaviorResult::success("no active proposals to vote on"));
                 };
-                let identity = self.identity.as_ref()
+                let identity = self
+                    .identity
+                    .as_ref()
                     .ok_or_else(|| BotError::NetworkError("no identity".into()))?;
                 // Message: proposal_id.to_le_bytes() (8) || b'Y' (VoteChoice::Yes)
                 let mut message = Vec::with_capacity(9);
@@ -266,7 +272,9 @@ impl Bot for DeltaVoterBot {
                     "vote": "yes",
                     "signature": hex::encode(sig.to_bytes()),
                 });
-                let tally = client.submit_governance_vote(proposal_id, &vote_body).await?;
+                let tally = client
+                    .submit_governance_vote(proposal_id, &vote_body)
+                    .await?;
                 Ok(BehaviorResult::success(format!(
                     "voted yes on proposal #{proposal_id}: yes={:?}",
                     tally.get("yes")
@@ -276,14 +284,19 @@ impl Bot for DeltaVoterBot {
                 // Vote yes on every active proposal (emphatic = covers all active)
                 let resp = client.get_governance_proposals().await?;
                 let proposals = resp.proposals.unwrap_or_default();
-                let active_ids: Vec<u64> = proposals.iter()
+                let active_ids: Vec<u64> = proposals
+                    .iter()
                     .filter(|p| p.get("status").and_then(|v| v.as_str()) == Some("active"))
                     .filter_map(|p| p.get("id").and_then(|v| v.as_u64()))
                     .collect();
                 if active_ids.is_empty() {
-                    return Ok(BehaviorResult::success("no active proposals for emphatic vote"));
+                    return Ok(BehaviorResult::success(
+                        "no active proposals for emphatic vote",
+                    ));
                 }
-                let identity = self.identity.as_ref()
+                let identity = self
+                    .identity
+                    .as_ref()
                     .ok_or_else(|| BotError::NetworkError("no identity".into()))?;
                 let mut voted = 0usize;
                 for pid in &active_ids {
@@ -302,7 +315,8 @@ impl Bot for DeltaVoterBot {
                     }
                 }
                 Ok(BehaviorResult::success(format!(
-                    "emphatic: voted yes on {voted}/{} proposals", active_ids.len()
+                    "emphatic: voted yes on {voted}/{} proposals",
+                    active_ids.len()
                 )))
             }
             "governance.delta.auto_disenroll" => {
