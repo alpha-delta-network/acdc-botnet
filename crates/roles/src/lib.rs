@@ -1,4 +1,3 @@
-pub mod gauntlet_bots;
 /// Bot role implementations
 ///
 /// This module provides concrete bot roles that implement the Bot trait.
