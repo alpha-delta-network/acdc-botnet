@@ -712,7 +712,10 @@ mod tests {
         let proposal = bot.build_mint_ax_proposal("recipient:alpha:xyz", 1_000_000);
         assert_eq!(proposal["type"], "mint_ax");
         assert_eq!(proposal["recipient"], "recipient:alpha:xyz");
-        assert_eq!(proposal["amount_microcredits"], 1_000_000u128);
+        assert_eq!(
+            proposal["amount_microcredits"],
+            serde_json::json!(1_000_000u64)
+        );
         assert_eq!(proposal["threshold_pct"], 67);
     }
 
