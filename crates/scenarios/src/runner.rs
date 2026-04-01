@@ -7,7 +7,10 @@ use tracing::info;
 use adnet_testbot::{
     BehaviorResult, Bot, BotContext, ExecutionContext, IdentityGenerator, NetworkEndpoints, Wallet,
 };
+use adnet_testbot_integration::{AdnetClient, TraceVerifier, VerificationContext};
 use adnet_testbot_roles::gauntlet_bots::LightFleet;
+
+use crate::assertions::AssertionRegistry;
 
 // ── YAML schema types ──────────────────────────────────────────────────────
 
@@ -268,12 +271,29 @@ impl GauntletPhaseRunner {
         let mut fleet = LightFleet::build();
         info!("LightFleet built with {} bots", fleet.bots.len());
 
+        // Build TraceVerifier and AssertionRegistry once for the full run.
+        let client = AdnetClient::new(adnet_url.clone())
+            .map_err(|e| anyhow::anyhow!("Failed to build AdnetClient for TraceVerifier: {}", e))?;
+        let verifier = TraceVerifier::new(client);
+        let registry = AssertionRegistry::canonical();
+        // Validate MECE at startup — panics if any UC is duplicated or missing.
+        registry.validate_mece();
+
         let mut phases = Vec::new();
         let mut total_passed = 0;
         let mut total_failed = 0;
 
         // Phase 0: Validators and Provers (ABORT on failure)
-        match Self::run_phase(0, &mut fleet, &adnet_url, FailAction::ABORT).await {
+        match Self::run_phase(
+            0,
+            &mut fleet,
+            &adnet_url,
+            FailAction::ABORT,
+            &verifier,
+            &registry,
+        )
+        .await
+        {
             Ok(result) => {
                 if result.passed {
                     total_passed += 1;
@@ -289,7 +309,16 @@ impl GauntletPhaseRunner {
 
         // Phases 1-6: Continue on failure
         for phase_num in 1..=6 {
-            match Self::run_phase(phase_num, &mut fleet, &adnet_url, FailAction::CONTINUE).await {
+            match Self::run_phase(
+                phase_num,
+                &mut fleet,
+                &adnet_url,
+                FailAction::CONTINUE,
+                &verifier,
+                &registry,
+            )
+            .await
+            {
                 Ok(result) => {
                     if result.passed {
                         total_passed += 1;
@@ -324,6 +353,8 @@ impl GauntletPhaseRunner {
         fleet: &mut LightFleet,
         adnet_url: &str,
         fail_action: FailAction,
+        verifier: &TraceVerifier,
+        registry: &AssertionRegistry,
     ) -> anyhow::Result<PhaseResult> {
         let start = Instant::now();
         info!("Starting phase {}", phase_num);
@@ -436,7 +467,9 @@ impl GauntletPhaseRunner {
 
                 // Execute behavior
                 let bot = fleet.get_bot_mut(bot_type, index)?;
-                match bot.execute_behavior(&behavior_name).await {
+                let behavior_result = bot.execute_behavior(&behavior_name).await;
+
+                match behavior_result {
                     Ok(result) => {
                         if Self::is_behavior_successful(&result, phase_num, bot_type, index) {
                             successful_behaviors += 1;
@@ -445,6 +478,24 @@ impl GauntletPhaseRunner {
                                 "Bot {} ({}) behavior {} failed: {:?}",
                                 bot_id, bot_type, behavior_name, result
                             ));
+                        }
+
+                        // After successful execution, run on-chain trace verification
+                        // if the registry knows about this action type.
+                        if let Some(_uc_id) = registry.uc_for_action(&behavior_name) {
+                            let vctx = Self::build_verification_context(&result);
+                            let vresult = verifier.verify(&behavior_name, &vctx).await;
+                            if !vresult.passed {
+                                all_errors.push(format!(
+                                    "TRACE FAIL [{}] {}: {}",
+                                    vresult.uc_id, vresult.action, vresult.evidence
+                                ));
+                            } else {
+                                info!(
+                                    "TRACE PASS [{}] {}: {}",
+                                    vresult.uc_id, vresult.action, vresult.evidence
+                                );
+                            }
                         }
                     }
                     Err(e) => {
@@ -615,6 +666,38 @@ impl GauntletPhaseRunner {
         let wallet = Wallet::new(bot_id.to_string());
 
         Ok(BotContext::new(execution_context, identity, wallet))
+    }
+
+    /// Build a VerificationContext from a BehaviorResult's data field.
+    ///
+    /// Extracts well-known keys from `result.data` (a JSON value) so the
+    /// TraceVerifier can perform the correct on-chain lookup.
+    fn build_verification_context(result: &BehaviorResult) -> VerificationContext {
+        let data = &result.data;
+        VerificationContext {
+            proposal_id: data.get("proposal_id").and_then(|v| v.as_u64()),
+            voter_public_key: data
+                .get("voter_public_key")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            gid_address: data
+                .get("gid_address")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            market: data
+                .get("market")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            transaction_id: data
+                .get("transaction_id")
+                .or_else(|| data.get("order_tx_id"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            address: data
+                .get("address")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+        }
     }
 
     /// Check if behavior result is successful
