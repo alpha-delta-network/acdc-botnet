@@ -31,8 +31,8 @@ use std::collections::HashMap;
 /// Number of co-signatories required per GID (D010 spec: 6)
 pub const GID_SIGNATORY_COUNT: usize = 6;
 
-/// Default M-of-N threshold for multi-sig vote submission
-pub const DEFAULT_MULTISIG_THRESHOLD: usize = 4;
+/// Default M-of-N threshold for multi-sig vote submission (REM003: 5-of-6)
+pub const DEFAULT_MULTISIG_THRESHOLD: usize = 5;
 
 /// Proposal type variants — covers all governance proposal types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -45,7 +45,7 @@ pub enum ProposalType {
     /// AX mint_public — governance-authorized AX issuance
     MintAx {
         recipient: String,
-        amount_microcredits: u64,
+        amount_microcredits: u128,
     },
     /// AX burn — remove AX from circulation
     BurnAx { amount_microcredits: u64 },
@@ -319,7 +319,7 @@ impl GovernorBot {
     pub fn build_mint_ax_proposal(
         &self,
         recipient: &str,
-        amount_microcredits: u64,
+        amount_microcredits: u128,
     ) -> serde_json::Value {
         serde_json::json!({
             "type": "mint_ax",
@@ -453,7 +453,7 @@ impl Bot for GovernorBot {
                         match client.get_grim_trigger_status(&self.gid_address).await {
                             Ok(status) => {
                                 let is_crippled = status
-                                    .get("is_crippled")
+                                    .get("crippled")
                                     .and_then(|v| v.as_bool())
                                     .unwrap_or(false);
                                 if is_crippled {
@@ -529,7 +529,7 @@ impl Bot for GovernorBot {
 
                     if let Some(signed) = self.sign_vote(id, VoteChoice::Yes) {
                         let body = serde_json::json!({
-                            "voter": signed.voter_public_key,
+                            "voter_public_key": signed.voter_public_key,
                             "vote": signed.vote,
                             "signature": signed.signature,
                         });
@@ -712,7 +712,10 @@ mod tests {
         let proposal = bot.build_mint_ax_proposal("recipient:alpha:xyz", 1_000_000);
         assert_eq!(proposal["type"], "mint_ax");
         assert_eq!(proposal["recipient"], "recipient:alpha:xyz");
-        assert_eq!(proposal["amount_microcredits"], 1_000_000u64);
+        assert_eq!(
+            proposal["amount_microcredits"],
+            serde_json::json!(1_000_000u64)
+        );
         assert_eq!(proposal["threshold_pct"], 67);
     }
 
@@ -732,8 +735,8 @@ mod tests {
         let mut bot = make_bot("g1", "gid:alpha:abc123");
         bot.start_multisig(42, VoteChoice::Yes);
 
-        // Add 3 signatures (below default threshold of 4)
-        for i in 0u8..3 {
+        // Add 4 signatures (below default threshold of 5)
+        for i in 0u8..4 {
             let key_bytes = [i + 1; 32];
             let sk = SigningKey::from_bytes(&key_bytes);
             let sv = SignedVote::new(&sk, 42, VoteChoice::Yes);
@@ -748,7 +751,7 @@ mod tests {
         let mut bot = make_bot("g1", "gid:alpha:abc123");
         bot.start_multisig(42, VoteChoice::Yes);
 
-        // Add DEFAULT_MULTISIG_THRESHOLD (4) signatures
+        // Add DEFAULT_MULTISIG_THRESHOLD (5) signatures
         for i in 0u8..DEFAULT_MULTISIG_THRESHOLD as u8 {
             let key_bytes = [i + 1; 32];
             let sk = SigningKey::from_bytes(&key_bytes);
@@ -831,7 +834,7 @@ mod tests {
         .is_joint());
         assert!(!ProposalType::MintAx {
             recipient: "r".into(),
-            amount_microcredits: 1
+            amount_microcredits: 1u128
         }
         .is_joint());
     }

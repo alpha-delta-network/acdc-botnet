@@ -32,6 +32,14 @@ impl VoteOption {
             VoteOption::No => "no",
         }
     }
+
+    /// Byte encoding for ed25519 vote signature: Yes -> b'Y' (0x59), No -> b'N' (0x4E)
+    pub fn to_byte(&self) -> u8 {
+        match self {
+            VoteOption::Yes => b'Y',
+            VoteOption::No => b'N',
+        }
+    }
 }
 
 impl BasicProposalVoting {
@@ -90,9 +98,30 @@ impl GovernanceBehavior for BasicProposalVoting {
                 continue;
             }
 
+            // Build signed vote: message = proposal_id_le8 || vote_byte
+            let mut msg = Vec::with_capacity(9);
+            msg.extend_from_slice(&id.to_le_bytes());
+            msg.push(self.vote.to_byte());
+            let (voter_public_key, signature) =
+                match context.identity.verifying_key().and_then(|vk| {
+                    context
+                        .identity
+                        .sign(&msg)
+                        .map(|sig| (hex::encode(vk.as_bytes()), hex::encode(sig.to_bytes())))
+                }) {
+                    Ok(pair) => pair,
+                    Err(e) => {
+                        let msg = format!("proposal {}: signing failed: {}", id, e);
+                        tracing::warn!("Bot {} vote error: {}", context.execution.bot_id, msg);
+                        errors.push(msg);
+                        continue;
+                    }
+                };
+
             let body = serde_json::json!({
-                "voter": context.execution.bot_id,
+                "voter_public_key": voter_public_key,
                 "vote": vote_str,
+                "signature": signature,
             });
 
             match client.submit_governance_vote(id, &body).await {
@@ -223,10 +252,6 @@ impl GovernanceBehavior for JointGovernance {
         let client = AdnetClient::new(adnet_url)?;
 
         let vote_str = self.vote.as_str();
-        let body = serde_json::json!({
-            "voter": context.execution.bot_id,
-            "vote": vote_str,
-        });
 
         let alpha_id: u64 = self.alpha_proposal_id.parse().unwrap_or(0);
         let delta_id: u64 = self.delta_proposal_id.parse().unwrap_or(0);
@@ -238,7 +263,28 @@ impl GovernanceBehavior for JointGovernance {
             )));
         }
 
-        client.submit_governance_vote(alpha_id, &body).await?;
+        // Build signed vote for Alpha proposal
+        let mut alpha_msg = Vec::with_capacity(9);
+        alpha_msg.extend_from_slice(&alpha_id.to_le_bytes());
+        alpha_msg.push(self.vote.to_byte());
+        let (alpha_vpk, alpha_sig) = context
+            .identity
+            .verifying_key()
+            .and_then(|vk| {
+                context
+                    .identity
+                    .sign(&alpha_msg)
+                    .map(|sig| (hex::encode(vk.as_bytes()), hex::encode(sig.to_bytes())))
+            })
+            .map_err(|e| BotError::BehaviorError(format!("signing failed: {}", e)))?;
+
+        let alpha_body = serde_json::json!({
+            "voter_public_key": alpha_vpk,
+            "vote": vote_str,
+            "signature": alpha_sig,
+        });
+
+        client.submit_governance_vote(alpha_id, &alpha_body).await?;
         tracing::info!(
             "Bot {} voted {} on Alpha proposal {}",
             context.execution.bot_id,
@@ -246,7 +292,28 @@ impl GovernanceBehavior for JointGovernance {
             alpha_id
         );
 
-        client.submit_governance_vote(delta_id, &body).await?;
+        // Build signed vote for Delta proposal
+        let mut delta_msg = Vec::with_capacity(9);
+        delta_msg.extend_from_slice(&delta_id.to_le_bytes());
+        delta_msg.push(self.vote.to_byte());
+        let (delta_vpk, delta_sig) = context
+            .identity
+            .verifying_key()
+            .and_then(|vk| {
+                context
+                    .identity
+                    .sign(&delta_msg)
+                    .map(|sig| (hex::encode(vk.as_bytes()), hex::encode(sig.to_bytes())))
+            })
+            .map_err(|e| BotError::BehaviorError(format!("signing failed: {}", e)))?;
+
+        let delta_body = serde_json::json!({
+            "voter_public_key": delta_vpk,
+            "vote": vote_str,
+            "signature": delta_sig,
+        });
+
+        client.submit_governance_vote(delta_id, &delta_body).await?;
         tracing::info!(
             "Bot {} voted {} on Delta proposal {}",
             context.execution.bot_id,
@@ -294,7 +361,7 @@ impl GovernanceBehavior for ApologyLifecycle {
         // 1. Check grim trigger status
         let gt_status = client.get_grim_trigger_status(&self.crippled_gid).await?;
         let is_crippled = gt_status
-            .get("is_crippled")
+            .get("crippled")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
