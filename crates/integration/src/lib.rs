@@ -6,7 +6,7 @@ pub mod alphaos_client;
 pub mod deltaos_client;
 pub mod trace_verifier;
 
-pub use adnet_client::AdnetClient;
+pub use adnet_client::{AdnetClient, BotWallet, WalletStore};
 pub use alphaos_client::AlphaOSClient;
 pub use deltaos_client::DeltaOSClient;
 pub use trace_verifier::{TraceVerifier, VerificationContext, VerificationResult};

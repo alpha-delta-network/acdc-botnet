@@ -1,0 +1,110 @@
+run_id: tn006-light-run2
+timestamp: "2026-03-31T19:49:17Z"
+fleet: light
+adnet_url: http://testnet001.ac-dc.network:8080
+testnet_state:
+  alpha_height: 2248
+  delta_height: 1966
+
+phases:
+  - phase: 0
+    name: Genesis + Health Gate
+    result: PASS
+    bots_ok: 6
+    bots_total: 6
+    errors: 0
+    duration_ms: 1265
+    note: "validator.attest (GET /api/v1/chain/height) + prover.submit_proof pass"
+
+  - phase: 1
+    name: Core Transactions + Cross-Chain
+    result: FAIL
+    bots_ok: 1
+    bots_total: 15
+    errors: 14
+    duration_ms: 2009
+    root_cause: >
+      transfer.ax_private sends dummy encrypted_tx hex to
+      POST /api/v1/transactions/submit/private -> 422 Unprocessable Entity.
+      Chain correctly rejects invalid ZK transactions.
+      scanner-00 passes (GET-only behavior, no tx submission).
+    fix_ref: TN006-LIGHT-REM003 Sprint 4 (real snarkVM ZK transactions via adnet CLI)
+
+  - phase: 2
+    name: Governance Lifecycle
+    result: FAIL
+    bots_ok: 0
+    bots_total: 18
+    errors: 18
+    duration_ms: 2287
+    root_causes:
+      - "governance.propose.parameter: dummy payload -> 422 (proposal_type + title required)"
+      - "governance.delta.vote: dummy Schnorr sig -> 422 (invalid voter_public_key or sig)"
+      - "techrep.vote_forge: votes on non-existent proposal id=1 -> 422"
+    fix_ref: TN006-LIGHT-REM003 Sprint 3 (GID behaviors) + Sprint 4 (governance payloads)
+
+  - phase: 3
+    name: Economic Simulation (DEX + Oracle)
+    result: PASS
+    bots_ok: 15
+    bots_total: 16
+    errors: 1
+    duration_ms: 129
+    warning: >
+      FALSE POSITIVE. TraderBot (15/16 bots) is a stub - no API calls made.
+      setup/execute/teardown log shows zero network activity in 0ms per bot.
+      oracle-00 correctly fails (dummy tx_bytes -> 422).
+    fix_ref: TN006-LIGHT-REM003 Sprint 4 (real adnet delta trade order CLI calls)
+
+  - phase: 4
+    name: Role Lifecycle (EarnIn, TechRep, Validators)
+    result: FAIL
+    bots_ok: 6
+    bots_total: 13
+    errors: 7
+    duration_ms: 2133
+    root_causes:
+      - "techrep.register: POST /api/v1/transactions/submit/public dummy tx_bytes -> 422"
+      - "earnin.apply: POST /api/v1/transactions/submit/public dummy tx_bytes -> 422"
+      - "validator.attest (5 bots) + prover.submit_proof (1 bot) PASS (health check path)"
+    fix_ref: TN006-LIGHT-REM003 Sprint 4 (real public transaction encoding)
+
+  - phase: 5
+    name: DEX + Oracle + Atomic Swaps
+    result: PASS
+    bots_ok: 15
+    bots_total: 18
+    errors: 3
+    duration_ms: 383
+    warning: >
+      FALSE POSITIVE. TraderBot stub dominates (15 bots pass instantly).
+      atomicswap.htlc_initiate fails correctly (dummy tx -> 422).
+      oracle.submit_prices fails correctly (dummy tx -> 422).
+    fix_ref: TN006-LIGHT-REM003 Sprint 4 + Sprint 3 (HTLC implementation)
+
+  - phase: 6
+    name: Security / Adversarial
+    result: PASS
+    bots_ok: 5
+    bots_total: 5
+    errors: 0
+    duration_ms: 1387
+    note: >
+      All 5 adversarial bots execute attack behaviors. Phase always passes
+      (adversarial attacks are expected to be rejected by chain).
+      Confirmed: chain logs ATTACK warnings for equivocation, invalid ZK,
+      oracle manipulation, mempool DoS, replay.
+
+summary:
+  phases_passed: 4
+  phases_failed: 3
+  genuine_passes: [0, 6]
+  false_positives: [3, 5]
+  genuine_failures: [1, 2, 4]
+  overall: FAIL
+  root_cause_common: >
+    All bot behaviors send dummy hex payloads (zero-filled or random bytes).
+    Chain correctly rejects all invalid transactions with 422.
+    No real snarkVM ZK proofs generated. No real governance signatures.
+    Fix requires: (1) 66 pre-generated wallets, (2) adnet CLI wrapping,
+    (3) real transaction encoding per REM003 Sprint plan.

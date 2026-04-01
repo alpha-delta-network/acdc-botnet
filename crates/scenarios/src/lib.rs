@@ -8,4 +8,4 @@ pub mod runner;
 
 pub use assertions::{AssertionEntry, AssertionRegistry};
 pub use loader::ScenarioLoader;
-pub use runner::{GauntletPhaseRunner, ScenarioRunner};
+pub use runner::{FleetType, GauntletPhaseRunner, PhaseResult, ScenarioRunner};

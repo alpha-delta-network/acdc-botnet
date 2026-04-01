@@ -1,0 +1,188 @@
+# Gauntlet-Light Phase 2 — Governance Lifecycle (Both Chains)
+# Duration: 45 minutes, 22 epochs, sequential
+# Bots: GovernorBot(5) + DeltaVoterBot(10) + TechRepBot(3)
+# UC coverage: ~40 of 57 from full TN006
+
+id: gauntlet_light_phase_2
+name: "Governance Lifecycle (Both Chains)"
+version: "1.0.0"
+phase: 2
+duration_minutes: 45
+epochs: 22
+fail_action: log_and_continue
+
+bots:
+  - role: GauntletGovernorBot
+    count: 5
+    start_offset_seconds: 0
+    multisig_threshold: 3
+  - role: DeltaVoterBot
+    count: 10
+    start_offset_seconds: 2
+    emphatic_dx_per_slot: 100
+  - role: TechRepBot
+    count: 3
+    start_offset_seconds: 5
+
+steps:
+  # ── ALPHA GOVERNANCE ──────────────────────────────────────────────────────
+  - id: "P2L-ALPHA-PARAM"
+    name: "Alpha: parameter update proposal (5 governors, 3-of-5)"
+    action: run_bot_behavior
+    bots: GauntletGovernorBot
+    behavior: "governance.propose.parameter"
+    timeout_seconds: 120
+    assertions:
+      - "P2L-GOV-001: parameter proposal submitted"
+
+  - id: "P2L-ALPHA-VOTE"
+    name: "Alpha: vote on parameter proposal"
+    action: run_bot_behavior
+    bots: GauntletGovernorBot
+    behavior: "governance.vote"
+    expected:
+      threshold_met: true
+      min_yes_votes: 3
+    timeout_seconds: 90
+    assertions:
+      - "P2L-GOV-002: 3-of-5 multisig threshold met"
+
+  - id: "P2L-ALPHA-EXECUTE"
+    name: "Alpha: execute passed proposal"
+    action: run_bot_behavior
+    bots: GauntletGovernorBot
+    behavior: "governance.execute"
+    timeout_seconds: 60
+    assertions:
+      - "P2L-GOV-003: proposal executed on Alpha chain"
+
+  - id: "P2L-ALPHA-MINT"
+    name: "Alpha: mint AX proposal"
+    action: run_bot_behavior
+    bots: GauntletGovernorBot
+    behavior: "governance.propose.mint"
+    timeout_seconds: 90
+    assertions:
+      - "P2L-GOV-004: mint proposal lifecycle complete"
+
+  - id: "P2L-ALPHA-GRIM"
+    name: "Alpha: Grim Trigger + apology recovery"
+    action: run_bot_sequence
+    bots: GauntletGovernorBot
+    behaviors: ["governance.grim_trigger", "governance.apology"]
+    timeout_seconds: 180
+    assertions:
+      - "P2L-GOV-005: Grim Trigger detected and fires"
+      - "P2L-GOV-006: apology proposal submitted and accepted"
+      - "P2L-GOV-007: GID status restored after apology"
+
+  # ── DELTA GOVERNANCE ──────────────────────────────────────────────────────
+  - id: "P2L-DELTA-ASSEMBLY"
+    name: "Delta: assembly proposal (100k DX, 4 sponsors)"
+    action: run_bot_behavior
+    bots: DeltaVoterBot
+    behavior: "governance.delta.vote"
+    iterations: 5
+    timeout_seconds: 120
+    assertions:
+      - "P2L-DV-001: Delta assembly proposal submitted"
+      - "P2L-DV-002: 4 sponsor signatures collected"
+
+  - id: "P2L-DELTA-EMPHATIC"
+    name: "Delta: emphatic voting (100 DX/slot, 50 per side)"
+    action: run_bot_behavior
+    bots: DeltaVoterBot
+    behavior: "governance.delta.emphatic_vote"
+    timeout_seconds: 90
+    assertions:
+      - "P2L-DV-003: emphatic votes cast at correct DX amounts"
+      - "P2L-DV-004: 100 DX/slot enforced"
+      - "P2L-DV-005: 50 DX per side enforced"
+
+  - id: "P2L-DELTA-SLASH"
+    name: "Delta: non-voter DX slash accumulation"
+    action: run_bot_behavior
+    bots: DeltaVoterBot
+    behavior: "governance.delta.auto_disenroll"
+    timeout_seconds: 60
+    assertions:
+      - "P2L-DV-006: non-voter slash recorded for abstaining bots"
+
+  # ── JOINT GOVERNANCE ──────────────────────────────────────────────────────
+  - id: "P2L-JOINT-ROUTE1"
+    name: "Joint governance: Alpha-initiated cross-chain proposal"
+    action: run_joint_governance
+    initiator: GauntletGovernorBot
+    responder: DeltaVoterBot
+    route: "alpha_initiated"
+    timeout_seconds: 180
+    assertions:
+      - "P2L-JG-001: joint proposal coordinated on both chains"
+      - "P2L-JG-002: both chains execute in same epoch"
+
+  - id: "P2L-JOINT-ROUTE2"
+    name: "Joint governance: Delta-initiated cross-chain proposal"
+    action: run_joint_governance
+    initiator: DeltaVoterBot
+    responder: GauntletGovernorBot
+    route: "delta_initiated"
+    timeout_seconds: 180
+    assertions:
+      - "P2L-JG-003: delta-initiated joint proposal completes"
+
+  # ── FORGE (TECHREP) ───────────────────────────────────────────────────────
+  - id: "P2L-TECHREP-REGISTER"
+    name: "TechRep: registration (3 reps)"
+    action: run_bot_behavior
+    bots: TechRepBot
+    behavior: "techrep.register"
+    timeout_seconds: 60
+    assertions:
+      - "P2L-TR-001: 3 TechReps registered"
+
+  - id: "P2L-TECHREP-FORGE"
+    name: "Forge: TechRep panel VRF + PR vote"
+    action: run_bot_behavior
+    bots: TechRepBot
+    behavior: "techrep.vote_forge"
+    timeout_seconds: 120
+    assertions:
+      - "P2L-TR-002: VRF panel assigned for simulated PR"
+      - "P2L-TR-003: TechRep votes cast and tallied"
+      - "P2L-TR-004: PR promoted on TechRep approval"
+
+  - id: "P2L-TECHREP-STAGED"
+    name: "Forge: staged deployment (shadow→standby→full)"
+    action: run_bot_behavior
+    bots: TechRepBot
+    behavior: "techrep.staged_deploy"
+    timeout_seconds: 120
+    assertions:
+      - "P2L-TR-005: staged deployment soak period respected"
+
+  - id: "P2L-EPOCH-WAIT"
+    name: "Wait for epoch 22"
+    action: wait_for_epoch
+    target_epoch: 22
+    timeout_seconds: 900
+
+pass_criteria:
+  - id: "P2L-PASS-1"
+    check: "alpha_proposals_complete_lifecycle"
+    detail: "parameter update + mint proposal both executed"
+  - id: "P2L-PASS-2"
+    check: "grim_trigger_fires_and_recovers"
+  - id: "P2L-PASS-3"
+    check: "delta_governance_emphatic_mechanics_correct"
+  - id: "P2L-PASS-4"
+    check: "joint_governance_routes_correctly"
+  - id: "P2L-PASS-5"
+    check: "multisig_threshold_3_of_5_works"
+  - id: "P2L-PASS-6"
+    check: "forge_techrep_panel_executes"
+
+on_pass:
+  - emit_metric: "gauntlet_phase_current" value: 2 labels: { run: "light" }
+  - log: "Phase 2 PASS"
+  - artifact: "gauntlet-light-phase-2-{timestamp}.yaml"
+  - next_phase: 3

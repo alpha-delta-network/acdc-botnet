@@ -1,0 +1,112 @@
+# Gauntlet-Light Phase 0 — Genesis + Health Gate
+# TN006-LIGHT: 5 active validators (no shadow), 1 prover (testnet006)
+# Duration: 15 minutes, 7 epochs, sequential — ABORT on any failure
+
+id: gauntlet_light_phase_0
+name: "Genesis + Health Gate"
+version: "1.0.0"
+phase: 0
+duration_minutes: 15
+epochs: 7
+fail_action: ABORT
+genesis_file: "config/gauntlet-light-genesis.yaml"
+orchestrator_config: "config/gauntlet-light-orchestrator.yaml"
+
+bots:
+  - role: ValidatorBot
+    count: 5
+    start_offset_seconds: 0
+  - role: ProverBot
+    count: 1
+    start_offset_seconds: 0
+
+steps:
+  - id: "P0L-GENESIS"
+    name: "Genesis invariant verification"
+    action: verify_genesis_invariants
+    config_ref: "genesis.genesis_invariants"
+    timeout_seconds: 30
+    fail_action: ABORT
+
+  - id: "P0L-VALIDATORS"
+    name: "Active validator health check"
+    action: check_validators_active
+    expected:
+      active: 5
+      shadow: 0
+      all_producing_blocks: true
+    timeout_seconds: 60
+    fail_action: ABORT
+
+  - id: "P0L-PROVER"
+    name: "Prover-01 connectivity (testnet006)"
+    action: check_provers_connected
+    expected:
+      count: 1
+      processing_queue: true
+      host: "testnet006.ac-dc.network"
+    timeout_seconds: 30
+    fail_action: ABORT
+
+  - id: "P0L-EPOCH"
+    name: "First epoch transition (0→1)"
+    action: wait_for_epoch_transition
+    from_epoch: 0
+    to_epoch: 1
+    timeout_seconds: 150
+    fail_action: ABORT
+
+  - id: "P0L-T1"
+    name: "T005 Tier 1 health assertions"
+    action: run_t005_tier1
+    expected:
+      all_pass: true
+    timeout_seconds: 120
+    fail_action: ABORT
+
+  - id: "P0L-SUPPLY"
+    name: "Genesis supply invariants"
+    action: verify_chain_invariants
+    checks:
+      - "total_ax == 500000000"
+      - "total_dx == 500000000"
+      - "dx_total_supply_constant"
+    timeout_seconds: 30
+    fail_action: ABORT
+
+  - id: "P0L-STABILITY"
+    name: "Epoch stability (7 epochs)"
+    action: wait_for_epoch
+    target_epoch: 7
+    check_interval_seconds: 30
+    timeout_seconds: 900
+    fail_action: ABORT
+
+pass_criteria:
+  - id: "P0L-1"
+    check: "all_t1_assertions_pass"
+  - id: "P0L-2"
+    check: "genesis_invariants_verified"
+  - id: "P0L-3"
+    check: "validators_reporting"
+    expected: { active: 5, shadow: 0 }
+  - id: "P0L-4"
+    check: "provers_connected"
+    expected: { count: 1, host: "testnet006.ac-dc.network" }
+  - id: "P0L-5"
+    check: "epoch_transition_observed"
+    expected: { from: 0, to: 1 }
+  - id: "P0L-6"
+    check: "supply_invariants_hold"
+
+on_pass:
+  - emit_metric: "gauntlet_phase_current" value: 0 labels: { run: "light" }
+  - emit_metric: "gauntlet_assertions_passed_total" value: 6
+  - log: "Phase 0 PASS — light gauntlet genesis verified"
+  - artifact: "gauntlet-light-phase-0-{timestamp}.yaml"
+  - next_phase: 1
+
+on_fail:
+  - log: "Phase 0 FAIL — ABORT gauntlet"
+  - artifact: "gauntlet-light-phase-0-FAIL-{timestamp}.yaml"
+  - action: ABORT_ALL

@@ -1,0 +1,291 @@
+# Gauntlet Genesis Configuration
+# Generated from TN006-gauntlet.component.cspec v1.0.0
+# Purpose: Testnet-to-Mainnet Gauntlet — pre-launch validation
+
+# =============================================================================
+# NETWORK
+# =============================================================================
+
+network:
+  alpha_network_id: 14
+  delta_network_id: 22
+  alpha_api_url: "${GAUNTLET_ALPHA_API_URL:-https://gauntlet.ac-dc.network:3030}"
+  delta_api_url: "${GAUNTLET_DELTA_API_URL:-https://gauntlet.ac-dc.network:4030}"
+  api_key: "${ADNET_API_KEY:-}"
+  timeout_s: 60
+
+# =============================================================================
+# EPOCH COMPRESSION (720:1 — 120s epoch)
+# =============================================================================
+
+epochs:
+  gauntlet_epoch_duration_seconds: 120
+  production_epoch_seconds: 86400
+  compression_ratio: 720
+  block_time_alpha_seconds: 4
+  block_time_delta_seconds: 4
+  blocks_per_epoch: 30
+
+  duration_mapping:
+    dead_wallet_threshold:  { epochs: 365, wall_time_hours: 12.2 }
+    dividend_forfeiture:    { epochs: 180, wall_time_hours: 6.0 }
+    founder_veto_expiry:    { epochs: 50,  wall_time_hours: 1.7 }
+    rotation_boundary:      { epochs: 7,   wall_time_minutes: 14 }
+    twap_30_fill:           { epochs: 30,  wall_time_hours: 1.0 }
+    earn_in_hold:           { epochs: 365, wall_time_hours: 12.2 }
+
+# =============================================================================
+# GENESIS SUPPLY
+# =============================================================================
+
+supply:
+  total_ax: 1_000_000_000
+  total_dx: 1_000_000_000
+  deterministic_seed: "SHA256('gauntlet-${DEPLOY_ID:-dev}-1.0.0')"
+  account_seed_derivation: "HKDF(master_seed, salt=account_id)"
+
+# =============================================================================
+# GENESIS ACTORS
+# =============================================================================
+
+governors:
+  count: 10
+  multisig_threshold: 3
+  multisig_total: 5
+  signatories_per_gid: 5
+  mint_limit_each: 100_000_000  # sum == total_ax
+
+validators:
+  active: 5
+  shadow: 2
+  stake_each:
+    ax: 100_000
+    dx: 25_000
+
+provers:
+  count: 2
+  stake_each:
+    dx: 25_000
+
+techreps:
+  count: 5
+  stake_each:
+    dx: 25_000
+
+user_wallets:
+  governance_eligible: { count: 30,  ax: 50_000,  dx: 15_000 }
+  traders:              { count: 40,  ax: 100_000, sax: 50_000, dx: 5_000 }
+  earn_in_candidates:   { count: 10,  ax: 1_000,   dx: 0 }
+  dead_wallet_targets:  { count: 5,   ax: 10_000,  dx: 5_000 }
+  atomic_swap_parties:  { count: 5,   ax: 50_000 }
+  general_purpose:      { count: 30,  ax: 10_000,  dx: 2_000 }
+
+system_pools:
+  earn_in_pool:    { dx: 500_000 }
+  reward_pool:     { dx: 2_000_000 }
+  treasury:        { sax: 10_000_000 }
+  insurance_fund:  { sax: 5_000_000 }
+
+genesis_invariants:
+  - "sum(governor.mint_limit) == total_ax"
+  - "every account cross-chain linked (same seed → Alpha + Delta)"
+  - "sum(all_dx) + system_pools == total_dx"
+  - "all 5 active validators producing blocks"
+  - "both provers connected and processing"
+  - "epochs advancing at gauntlet_epoch_duration_seconds intervals"
+
+# =============================================================================
+# BOT FLEET (169 bots)
+# =============================================================================
+
+bots:
+  UserTransactor:
+    count: 30
+    phases: "1-7"
+    wallet_pool: governance_eligible
+    uc_coverage: "UC-A-U-001..007, UC-D-U-001..002/009..011"
+
+  GovernorBot:
+    count: 10
+    phases: "2-7"
+    wallet_pool: governors
+    uc_coverage: "UC-GA-U-*, UC-A-U-008..011, UC-A-S-007..019/035..036"
+    config:
+      multisig_threshold: 3
+      multisig_total: 5
+      grim_trigger_aware: true
+
+  DeltaVoterBot:
+    count: 30
+    phases: "2-7"
+    wallet_pool: governance_eligible
+    uc_coverage: "UC-GD-U/S-*, UC-D-U-015..017"
+    config:
+      emphatic_voting: true
+      dx_per_slot: 100
+      dx_per_side: 50
+
+  ValidatorBot:
+    count: 7
+    phases: "0-7"
+    wallet_pool: validators
+    uc_coverage: "UC-V-U/S-*, UC-TR-S-001..005/018..020"
+    config:
+      includes_shadow: true
+
+  ProverBot:
+    count: 2
+    phases: "0-7"
+    wallet_pool: provers
+    uc_coverage: "UC-P-U/S-*, UC-TR-S-006..010/012/015..016/021"
+
+  TechRepBot:
+    count: 5
+    phases: "2-7"
+    wallet_pool: techreps
+    uc_coverage: "UC-T-U/S-*, UC-F-U-003..005"
+
+  TraderBot:
+    count: 40
+    phases: "3-7"
+    wallet_pool: traders
+    uc_coverage: "UC-D-U-003..006, UC-D-S-002..005, UC-K-S-006/029..030"
+
+  EarnInBot:
+    count: 10
+    phases: "4-7"
+    wallet_pool: earn_in_candidates
+    uc_coverage: "UC-K-U-001..004/009, UC-K-S-010..013/024"
+    config:
+      expected_success: 8
+      expected_fail: 2
+
+  AtomicSwapBot:
+    count: 5
+    phases: "5-7"
+    wallet_pool: atomic_swap_parties
+    uc_coverage: "UC-D-U-019..025/028, UC-D-S-034..043"
+
+  DeadWalletBot:
+    count: 5
+    phases: "7"
+    wallet_pool: dead_wallet_targets
+    uc_coverage: "UC-D-S-044..054, UC-D-G-006..008"
+
+  AdversarialBot:
+    count: 8
+    phases: "6"
+    wallet_pool: general_purpose
+    uc_coverage: "UC-V-S-005, UC-P-S-010..011, UC-A-S-001 (reject), UC-N-S-003 (DoS)"
+    attacks:
+      - equivocation
+      - invalid_zk_proof
+      - oracle_manipulation
+      - mempool_dos
+      - replay
+      - mev_extraction
+      - bridge_mismatch
+      - double_spend
+
+  OracleBot:
+    count: 1
+    phases: "3-7"
+    wallet_pool: general_purpose
+    uc_coverage: "UC-D-U-026..027, UC-D-S-022..030, UC-D-G-001..003"
+    config:
+      fx_pairs: 25
+      harmonic_mean: true
+      ax_xau_formula: "0.35 / harmonic_mean"
+
+  BridgeBot:
+    count: 10
+    phases: "1-7"
+    wallet_pool: general_purpose
+    uc_coverage: "UC-A-S-005..006, UC-D-S-006..007, UC-N-S-014/017..018"
+
+  MessengerBot:
+    count: 5
+    phases: "8"
+    wallet_pool: general_purpose
+    uc_coverage: "UC-WM-U/S-*"
+
+  ScannerBot:
+    count: 1
+    phases: "1-8"
+    wallet_pool: general_purpose
+    uc_coverage: "UC-SC-U-*"
+
+bot_fleet_total: 169
+
+determinism:
+  prng: "ChaCha20Rng"
+  seed_formula: "hash(bot_id, deploy_id)"
+  note: "Same DEPLOY_ID + version = identical bot behavior"
+
+# =============================================================================
+# PHASE 0 PASS CRITERIA (Health Gate)
+# =============================================================================
+
+phase_0:
+  name: "Genesis + Health Gate"
+  duration_minutes: 15
+  epochs: 7
+  pass_criteria:
+    - id: "P0-1"
+      check: "all_t1_assertions_pass"
+      description: "All T005 Tier 1 assertions PASS"
+    - id: "P0-2"
+      check: "genesis_invariants_verified"
+      description: "Genesis invariants satisfied on both chains"
+    - id: "P0-3"
+      check: "validators_reporting"
+      description: "5 active + 2 shadow validators reporting blocks"
+    - id: "P0-4"
+      check: "provers_connected"
+      description: "Both provers connected and processing ZK queue"
+    - id: "P0-5"
+      check: "epoch_transition_observed"
+      description: "Epoch 0→1 transition observed within 120s"
+  fail_action: ABORT
+
+# =============================================================================
+# SERVER TOPOLOGY
+# =============================================================================
+
+servers:
+  gauntlet-val-01:  { role: "active_validator + API" }
+  gauntlet-val-02:  { role: "active_validator + API" }
+  gauntlet-val-03:  { role: "active_validator + API" }
+  gauntlet-val-04:  { role: "active_validator + API" }
+  gauntlet-val-05:  { role: "active_validator + API" }
+  gauntlet-val-06:  { role: "shadow_validator" }
+  gauntlet-val-07:  { role: "shadow_validator" }
+  gauntlet-prover-01: { role: "prover (GPU)" }
+  gauntlet-prover-02: { role: "prover (GPU)" }
+  gauntlet-orch-01:   { role: "bot_orchestrator + monitoring" }
+  minimum_viable: 8
+
+# =============================================================================
+# MONITORING
+# =============================================================================
+
+monitoring:
+  prometheus_scrape_interval: 15s
+  metrics:
+    - gauntlet_phase_current
+    - gauntlet_epoch_current
+    - gauntlet_assertions_passed_total
+    - gauntlet_assertions_failed_total
+    - gauntlet_bot_active_count
+    - gauntlet_tx_submitted_total
+    - gauntlet_tx_confirmed_total
+    - gauntlet_block_height
+    - gauntlet_dx_total_supply
+    - gauntlet_bridge_locked_ax
+    - gauntlet_bridge_minted_sax
+
+  output_artifacts:
+    - "gauntlet-phase-{N}-{timestamp}.yaml"
+    - "gauntlet-final-report.yaml"
+    - "gauntlet-assertions.jsonl"
+    - "gauntlet-bot-logs/"

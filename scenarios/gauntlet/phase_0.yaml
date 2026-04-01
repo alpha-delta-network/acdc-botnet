@@ -1,0 +1,100 @@
+# Gauntlet Phase 0 — Genesis + Health Gate Scenario
+# TN006 Phase 0: 15 minutes, 7 epochs, sequential
+# ABORT on any failure
+
+id: gauntlet_phase_0
+name: "Genesis + Health Gate"
+version: "1.0.0"
+phase: 0
+duration_minutes: 15
+epochs: 7
+fail_action: ABORT
+
+description: >
+  Deploy genesis, start all nodes, run T005 Tier 1 health gate.
+  Verify genesis invariants. Confirm epoch counter advancing.
+
+config:
+  genesis_file: "config/gauntlet-genesis.yaml"
+
+# Bots active in Phase 0
+bots:
+  - role: ValidatorBot
+    count: 7
+    start_offset_seconds: 0
+  - role: ProverBot
+    count: 2
+    start_offset_seconds: 0
+
+# Steps executed in order
+steps:
+  - id: "P0-GENESIS"
+    name: "Genesis verification"
+    action: verify_genesis_invariants
+    config_ref: "genesis.genesis_invariants"
+    timeout_seconds: 30
+    fail_action: ABORT
+
+  - id: "P0-VALIDATORS"
+    name: "Validator health check"
+    action: check_validators_active
+    expected:
+      active: 5
+      shadow: 2
+      all_producing_blocks: true
+    timeout_seconds: 60
+    fail_action: ABORT
+
+  - id: "P0-PROVERS"
+    name: "Prover connectivity check"
+    action: check_provers_connected
+    expected:
+      count: 2
+      processing_queue: true
+    timeout_seconds: 30
+    fail_action: ABORT
+
+  - id: "P0-EPOCH"
+    name: "Epoch advancement check"
+    action: wait_for_epoch_transition
+    from_epoch: 0
+    to_epoch: 1
+    timeout_seconds: 150
+    fail_action: ABORT
+
+  - id: "P0-T1"
+    name: "T005 Tier 1 assertions"
+    action: run_t005_tier1
+    expected:
+      all_pass: true
+    timeout_seconds: 120
+    fail_action: ABORT
+
+  - id: "P0-EPOCH-STABILITY"
+    name: "Epoch stability (7 epochs)"
+    action: wait_for_epoch
+    target_epoch: 7
+    timeout_seconds: 900
+    fail_action: ABORT
+
+# Pass criteria (all must be satisfied)
+pass_criteria:
+  - id: "P0-1"
+    check: "all_t1_assertions_pass"
+  - id: "P0-2"
+    check: "genesis_invariants_verified"
+  - id: "P0-3"
+    check: "validators_reporting"
+    expected: { active: 5, shadow: 2 }
+  - id: "P0-4"
+    check: "provers_connected"
+    expected: { count: 2 }
+  - id: "P0-5"
+    check: "epoch_transition_observed"
+    expected: { from: 0, to: 1 }
+
+# Output on pass
+on_pass:
+  - emit_metric: "gauntlet_phase_current{phase=0}" value: 1
+  - log: "Phase 0 PASS — proceeding to Phase 1"
+  - artifact: "gauntlet-phase-0-{timestamp}.yaml"

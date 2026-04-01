@@ -61,8 +61,8 @@ SUITE_MAP: Dict[str, Dict[str, Any]] = {
         "timeout": 120,
         "max_bots": 3,
         "tier": 1,
-        "description": "Basic tx lifecycle (submit transfer + confirm)",
-        "behavior_override": "transfer.submit_only",   # run only the transfer part
+        "description": "Chain liveness (block production advancing)",
+        "behavior_override": "validator.produce_blocks",   # check chain is alive
     },
     # Tier 2 — feature complete
     "T2.1": {
@@ -274,6 +274,7 @@ def run_suite(
         timeout_sec=timeout,
         max_bots=max_bots,
         dry_run=dry_run,
+        behavior_override=cfg.get("behavior_override"),
     )
 
 

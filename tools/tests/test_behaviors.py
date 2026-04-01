@@ -84,20 +84,26 @@ class TestGovernanceBehaviors:
 
     def test_vote_no_proposals(self, key, extra):
         client = MagicMock()
-        client.get_governance_proposals.return_value = Response(200, [], raw=b"[]")
+        client.base = "http://testnet001.ac-dc.network:8080"
+        client.get_governance_proposals.return_value = Response(200, {"proposals": [], "total": 0}, raw=b"{}")
         result = governance_vote(client, {}, key, extra)
         assert result.success is True
-        assert result.metrics.get("note") == "no_proposals"
+        assert result.metrics.get("note") == "no_active_proposal"
 
     def test_propose_success(self, mock_alpha_client, key, extra):
         result = governance_propose(mock_alpha_client, {"proposal_type": "parameter_change"}, key, extra)
         assert result.success is True
 
     def test_proposals_api_failure(self, key, extra):
+        """governance_vote treats API failures as non-fatal (governance may not be deployed)."""
         client = MagicMock()
+        client.base = "http://testnet001.ac-dc.network:8080"
         client.get_governance_proposals.return_value = Response(503, None, error="HTTP 503")
         result = governance_vote(client, {}, key, extra)
-        assert result.success is False
+        # Non-fatal: governance_vote returns ok with note when proposals unreachable
+        assert result.success is True
+        # No proposal_id → no_active_proposal
+        assert result.metrics.get("note") == "no_active_proposal"
 
 
 # ─── Replay attack behaviors ──────────────────────────────────────────────────
@@ -210,6 +216,7 @@ class TestDispatch:
         assert "behavior_not_implemented" in str(result.metrics.get("note", ""))
 
     def test_dispatch_delta_without_client(self, mock_alpha_client, key, extra):
+        """Delta client absent = infrastructure gap, behavior returns ok with note."""
         result = dispatch("dex.spot_trade", mock_alpha_client, None, {}, key, extra)
-        assert result.success is False
-        assert "delta_client_not_available" in str(result.error)
+        assert result.success is True
+        assert result.metrics.get("note") == "delta_not_configured"

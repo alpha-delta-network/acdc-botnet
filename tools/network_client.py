@@ -1,16 +1,21 @@
 """
-network_client.py — REST client for AlphaOS / DeltaOS testnet nodes.
+network_client.py — REST client for adnet public API (port 8080).
 
-Covers all endpoints used by T005 behavior implementations.
-Designed to be sync-friendly (uses requests) for simplicity in the runner.
+All external-facing endpoints go through /api/v1/... on port 8080.
+Ports 3030/3031 are internal-only (alphavm/deltavm direct).
 """
 import json
+import os
 import time
 import urllib.request
 import urllib.error
 import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
+
+# API key for adnet public API — any ak_/pk_ prefix is accepted as Standard tier.
+# Set ADNET_API_KEY env var to override.
+_DEFAULT_API_KEY = "ak_botnet_testnet_2026"
 
 
 # ─── Response wrapper ────────────────────────────────────────────────────────
@@ -53,6 +58,10 @@ def _do_request(
     headers = headers or {}
     if body and "Content-Type" not in headers:
         headers["Content-Type"] = "application/json"
+    # Attach API key if hitting port 8080
+    if ":8080" in url and "Authorization" not in headers:
+        api_key = os.environ.get("ADNET_API_KEY", _DEFAULT_API_KEY)
+        headers["Authorization"] = f"Bearer {api_key}"
 
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
@@ -88,118 +97,134 @@ def _post_raw(url: str, data: bytes, content_type: str = "application/octet-stre
     return _do_request("POST", url, body=data, headers=headers, timeout=timeout)
 
 
-# ─── AlphaOS client ──────────────────────────────────────────────────────────
+# ─── AlphaClient ─────────────────────────────────────────────────────────────
 
 class AlphaClient:
     """
-    REST client for AlphaOS (port 3030) and health endpoint (port 3000).
-    All methods return Response objects so callers can inspect status + body.
+    REST client for adnet public API on port 8080.
+    All routes use /api/v1/... prefix.
+    Ports 3030/3031 are internal only — never used externally.
     """
 
-    def __init__(self, host: str, rpc_port: int = 3030, health_port: int = 3000, timeout: int = 10):
+    def __init__(self, host: str, port: int = 8080, timeout: int = 10):
         self.host = host
-        self.rpc_base = f"http://{host}:{rpc_port}"
-        self.health_base = f"http://{host}:{health_port}"
+        self.base = f"http://{host}:{port}"
         self.timeout = timeout
+
+    @property
+    def rpc_base(self) -> str:
+        """Internal RPC URL (port 3030) used by adnet CLI and program execution."""
+        return f"http://{self.host}:3030"
 
     # ── Health ────────────────────────────────────────────────────────────────
 
     def health(self) -> Response:
-        return _get(f"{self.health_base}/health", timeout=self.timeout)
+        return _get(f"{self.base}/health", timeout=self.timeout)
 
     # ── Blocks ────────────────────────────────────────────────────────────────
 
     def get_height(self) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/block/height/latest", timeout=self.timeout)
+        return _get(f"{self.base}/api/v1/chain/height", timeout=self.timeout)
 
     def get_block(self, height: int) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/block/{height}", timeout=self.timeout)
+        return _get(f"{self.base}/api/v1/blocks/{height}", timeout=self.timeout)
 
     def get_latest_block(self) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/block/latest", timeout=self.timeout)
+        return _get(f"{self.base}/api/v1/blocks/latest", timeout=self.timeout)
 
     # ── Transactions ──────────────────────────────────────────────────────────
 
-    def broadcast_transaction(self, tx_json: str) -> Response:
-        """Broadcast a serialized transaction (hex string or JSON-encoded)."""
+    def broadcast_transaction(self, tx_json) -> Response:
+        """Submit a public transaction via adnet API."""
         payload = json.loads(tx_json) if isinstance(tx_json, str) else tx_json
-        return _post(f"{self.rpc_base}/mainnet/transaction/broadcast", payload, timeout=30)
+        return _post(f"{self.base}/api/v1/transactions/submit/public", payload, timeout=30)
 
     def broadcast_transaction_bytes(self, tx_bytes: bytes) -> Response:
-        return _post_raw(f"{self.rpc_base}/mainnet/transaction/broadcast", tx_bytes, timeout=30)
+        return _post_raw(f"{self.base}/api/v1/transactions/submit/public", tx_bytes, timeout=30)
 
     def get_transaction(self, tx_id: str) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/transaction/{tx_id}", timeout=self.timeout)
-
-    def get_transaction_status(self, tx_id: str) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/transaction/{tx_id}/status", timeout=self.timeout)
+        return _get(f"{self.base}/api/v1/blocks/by-tx/{tx_id}", timeout=self.timeout)
 
     def get_mempool(self) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/memoryPool/transactions", timeout=self.timeout)
+        return _get(f"{self.base}/api/v1/mempool", timeout=self.timeout)
 
     def get_mempool_size(self) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/memoryPool/size", timeout=self.timeout)
+        resp = self.get_mempool()
+        if resp.ok and isinstance(resp.body, dict):
+            # Return a synthetic size response
+            size = resp.body.get("size", resp.body.get("count", 0))
+            return Response(status=200, body=size)
+        return resp
 
     # ── Accounts ──────────────────────────────────────────────────────────────
 
     def get_balance(self, address: str) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/program/credits.alpha/mapping/account/{address}", timeout=self.timeout)
-
-    def get_record(self, record_id: str) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/record/{record_id}", timeout=self.timeout)
+        # Public API balance endpoint expects 128-char hex Grumpkin (Delta) addresses.
+        # For Alpha bech32 addresses (ac1...), use state/path lookup instead.
+        if address.startswith("ac1") or address.startswith("av1"):
+            key_enc = urllib.parse.quote(f"credits.alpha/account/{address}", safe="")
+            return _get(f"{self.base}/api/v1/state/path/{key_enc}", timeout=self.timeout)
+        return _get(f"{self.base}/api/v1/addresses/{address}/balance", timeout=self.timeout)
 
     # ── Governance ────────────────────────────────────────────────────────────
 
     def get_governance_proposals(self) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/program/governance.alpha/mapping/proposals", timeout=self.timeout)
+        return _get(f"{self.base}/api/v1/governance/proposals", timeout=self.timeout)
 
-    def get_governance_votes(self, proposal_id: str) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/program/governance.alpha/mapping/votes/{proposal_id}", timeout=self.timeout)
+    def get_governance_proposal(self, proposal_id) -> Response:
+        return _get(f"{self.base}/api/v1/governance/proposals/{proposal_id}", timeout=self.timeout)
 
     def get_governance_state(self) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/program/governance.alpha/mapping/state", timeout=self.timeout)
+        return self.get_governance_proposals()
 
-    # ── Network ───────────────────────────────────────────────────────────────
+    def get_governance_votes(self, proposal_id) -> Response:
+        return _get(f"{self.base}/api/v1/governance/proposals/{proposal_id}", timeout=self.timeout)
 
-    def get_peers_count(self) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/peers/count", timeout=self.timeout)
-
-    def get_peers(self) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/peers/all", timeout=self.timeout)
+    # ── Network / Validators ──────────────────────────────────────────────────
 
     def get_committee(self) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/latest/committee", timeout=self.timeout)
+        return _get(f"{self.base}/api/v1/committee", timeout=self.timeout)
+
+    def get_validators(self) -> Response:
+        return _get(f"{self.base}/api/v1/validators", timeout=self.timeout)
 
     def get_state_root(self) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/stateRoot/latest", timeout=self.timeout)
+        return _get(f"{self.base}/api/v1/state/root", timeout=self.timeout)
 
-    # ── Programs ──────────────────────────────────────────────────────────────
+    def get_peers_count(self) -> Response:
+        # No direct peers endpoint on public API — use validators as proxy
+        return self.get_validators()
 
-    def get_program(self, program_id: str) -> Response:
-        return _get(f"{self.rpc_base}/mainnet/program/{program_id}", timeout=self.timeout)
+    def get_peers(self) -> Response:
+        return self.get_validators()
 
-    def get_mapping_value(self, program_id: str, mapping: str, key: str) -> Response:
-        return _get(
-            f"{self.rpc_base}/mainnet/program/{program_id}/mapping/{mapping}/{key}",
-            timeout=self.timeout,
-        )
+    # ── Bridge ────────────────────────────────────────────────────────────────
+
+    def get_bridge_state(self) -> Response:
+        return _get(f"{self.base}/api/v1/bridge/state", timeout=self.timeout)
+
+    def lock_for_bridge(self, payload: dict) -> Response:
+        return _post(f"{self.base}/api/v1/bridge/lock", payload, timeout=30)
+
+    # ── GCI governance ────────────────────────────────────────────────────────
+
+    def get_gci_active(self) -> Response:
+        return _get(f"{self.base}/api/governance/gci/active", timeout=self.timeout)
+
+    def get_gci_roster(self, gid: str) -> Response:
+        return _get(f"{self.base}/api/governance/gci/{gid}/roster", timeout=self.timeout)
+
+    def register_gci(self, payload: dict) -> Response:
+        return _post(f"{self.base}/api/governance/gci/register", payload, timeout=30)
 
     # ── Convenience ───────────────────────────────────────────────────────────
 
     def wait_for_confirmation(self, tx_id: str, timeout_sec: int = 60) -> Tuple[bool, Optional[str]]:
-        """Poll until tx is confirmed or timeout. Returns (confirmed, status_str)."""
+        """Poll until tx appears in a block or timeout."""
         deadline = time.time() + timeout_sec
         while time.time() < deadline:
-            resp = self.get_transaction_status(tx_id)
-            if resp.ok:
-                status = resp.body if isinstance(resp.body, str) else resp.json_field("status")
-                if status in ("confirmed", "finalized", "included"):
-                    return True, status
-                if status in ("rejected", "failed", "invalid"):
-                    return False, status
-            # Also check by getting the transaction itself
-            resp2 = self.get_transaction(tx_id)
-            if resp2.ok and resp2.body:
+            resp = self.get_transaction(tx_id)
+            if resp.ok and resp.body:
                 return True, "confirmed"
             time.sleep(3)
         return False, "timeout"
@@ -213,7 +238,7 @@ class AlphaClient:
         if isinstance(body, int):
             return body
         if isinstance(body, dict):
-            for k in ("height", "block_height", "latest"):
+            for k in ("alpha_height", "height", "block_height", "latest", "chain_height"):
                 if k in body:
                     try:
                         return int(body[k])
@@ -225,52 +250,56 @@ class AlphaClient:
             return None
 
 
-# ─── DeltaOS client ──────────────────────────────────────────────────────────
+# ─── DeltaClient ─────────────────────────────────────────────────────────────
 
 class DeltaClient:
     """
-    REST client for DeltaOS (port 3031) and adnet-api (port 8080).
-    DEX, perpetuals, oracle endpoints.
+    REST client for Delta chain via adnet public API (port 8080).
     """
 
-    def __init__(self, host: str, rpc_port: int = 3031, api_port: int = 8080, timeout: int = 10):
+    def __init__(self, host: str, port: int = 8080, timeout: int = 10):
         self.host = host
-        self.rpc_base = f"http://{host}:{rpc_port}"
-        self.api_base = f"http://{host}:{api_port}"
+        self.base = f"http://{host}:{port}"
         self.timeout = timeout
 
+    @property
+    def rpc_base(self) -> str:
+        """Internal RPC URL (port 3030) used by adnet CLI and program execution."""
+        return f"http://{self.host}:3030"
+
     def get_dex_pairs(self) -> Response:
-        return _get(f"{self.rpc_base}/delta/dex/pairs", timeout=self.timeout)
+        return _get(f"{self.base}/api/v1/dex/pairs", timeout=self.timeout)
 
     def get_orderbook(self, pair: str) -> Response:
-        return _get(f"{self.rpc_base}/delta/dex/orderbook/{pair}", timeout=self.timeout)
+        return _get(f"{self.base}/api/v1/dex/orderbook/{pair}", timeout=self.timeout)
 
     def submit_order(self, order_tx: dict) -> Response:
-        """Submit a public DEX order via adnet-api PublicBlockQueue (port 8080)."""
-        import json as _json
-        tx_bytes_hex = _json.dumps(order_tx).encode().hex()
-        # Placeholder 32-byte proof; full Groth16 verification wired in Phase B.
-        proof_hex = "00" * 32
         payload = {
             "chain_id": "delta",
-            "tx_bytes": tx_bytes_hex,
-            "proof": proof_hex,
+            "tx_bytes": json.dumps(order_tx).encode().hex(),
+            "proof": "00" * 32,
             "fee": order_tx.get("fee", 150),
         }
-        return _post(f"{self.api_base}/api/v1/transactions/submit/public", payload, timeout=30)
+        return _post(f"{self.base}/api/v1/transactions/submit/public", payload, timeout=30)
 
     def get_oracle_price(self, asset: str) -> Response:
-        return _get(f"{self.rpc_base}/delta/oracle/price/{asset}", timeout=self.timeout)
+        return _get(f"{self.base}/api/v1/oracle/prices", timeout=self.timeout)
 
     def get_balance(self, address: str) -> Response:
-        return _get(f"{self.rpc_base}/delta/account/{address}/balance", timeout=self.timeout)
+        return _get(f"{self.base}/api/v1/addresses/{address}/balance", timeout=self.timeout)
+
+    def get_bridge_state(self) -> Response:
+        return _get(f"{self.base}/api/v1/bridge/state", timeout=self.timeout)
+
+    def get_delta_state_root(self) -> Response:
+        return _get(f"{self.base}/api/v1/state/root/delta", timeout=self.timeout)
 
 
 # ─── Multi-node client ───────────────────────────────────────────────────────
 
 class MultiNodeClient:
     """
-    Wraps multiple AlphaClients for parallel checks across all 5 validators.
+    Wraps multiple AlphaClients for parallel checks across all validators.
     """
     VALIDATOR_HOSTS = [
         "testnet001.ac-dc.network",

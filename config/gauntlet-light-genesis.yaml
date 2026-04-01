@@ -1,0 +1,114 @@
+# Gauntlet-Light Genesis Configuration
+# Generated from TN006-LIGHT.component.cspec v1.0.0
+# Topology: testnet001-005 (validators) + testnet006 (prover-01 + orchestrator)
+
+network:
+  alpha_network_id: 14
+  delta_network_id: 22
+  alpha_api_url: "${ALPHA_API_URL:-http://testnet001.ac-dc.network:3030}"
+  delta_api_url: "${DELTA_API_URL:-http://testnet001.ac-dc.network:4030}"
+  api_key: "${ADNET_API_KEY:-}"
+  timeout_s: 60
+
+validators:
+  hosts: [testnet001.ac-dc.network, testnet002.ac-dc.network, testnet003.ac-dc.network, testnet004.ac-dc.network, testnet005.ac-dc.network]
+  ssh_port: 2584
+  ssh_user: devops
+
+provers:
+  hosts: [testnet006.ac-dc.network]
+  ssh_port: 2584
+  ssh_user: devops
+
+orchestrator:
+  host: testnet006.ac-dc.network
+  grpc_port: 50051
+  ssh_port: 2584
+  ssh_user: devops
+  prometheus_port: 9090
+
+epochs:
+  gauntlet_epoch_duration_seconds: 120
+  production_epoch_seconds: 86400
+  compression_ratio: 720
+  block_time_alpha_seconds: 4
+  block_time_delta_seconds: 4
+  blocks_per_epoch: 30
+  duration_mapping:
+    earn_in_hold:      { epochs: 365, wall_time_hours: 12.2 }
+    rotation_boundary: { epochs: 7, wall_time_minutes: 14 }
+    twap_30_fill:      { epochs: 30, wall_time_hours: 1.0 }
+    dead_wallet_threshold: { epochs: 365, note: "DEFERRED - full TN006 only" }
+    dividend_forfeiture:   { epochs: 180, note: "DEFERRED - full TN006 only" }
+
+supply:
+  total_ax: 500000000
+  total_dx: 500000000
+  deterministic_seed: "SHA256(gauntlet-light-DEPLOY_ID-1.0.0)"
+  account_seed_derivation: "HKDF(master_seed, salt=account_id)"
+
+governors:
+  count: 10
+  multisig_threshold: 3
+  multisig_total: 5
+  signatories_per_gid: 5
+  mint_limit_each: 50000000
+
+validators:
+  active: 5
+  shadow: 0
+  stake_each: { ax: 100000, dx: 25000 }
+
+provers:
+  count: 1
+  stake_each: { dx: 25000 }
+
+techreps:
+  count: 5
+  stake_each: { dx: 25000 }
+
+user_wallets:
+  governance_eligible: { count: 15, ax: 50000,  dx: 15000 }
+  traders:              { count: 20, ax: 100000, sax: 50000, dx: 5000 }
+  earn_in_candidates:   { count: 4,  ax: 1000,   dx: 0 }
+  dead_wallet_targets:  { count: 0,  note: "Phase 7 skipped" }
+  atomic_swap_parties:  { count: 2,  ax: 50000 }
+  general_purpose:      { count: 15, ax: 10000,  dx: 2000 }
+
+system_pools:
+  earn_in_pool:   { dx: 200000 }
+  reward_pool:    { dx: 1000000 }
+  treasury:       { sax: 5000000 }
+  insurance_fund: { sax: 2500000 }
+
+genesis_invariants:
+  - "sum(governor.mint_limit) == total_ax"
+  - "every account cross-chain linked"
+  - "sum(all_dx) + system_pools == total_dx"
+  - "all 5 active validators producing blocks"
+  - "prover-01 (testnet006) connected and processing"
+  - "epochs advancing at gauntlet_epoch_duration_seconds intervals"
+
+bots:
+  UserTransactor:  { count: 10, phases: "1-6", wallet_pool: governance_eligible }
+  GovernorBot:     { count: 5,  phases: "2-6", wallet_pool: governors, multisig_threshold: 3 }
+  DeltaVoterBot:   { count: 10, phases: "2-6", wallet_pool: governance_eligible, emphatic_voting: true }
+  ValidatorBot:    { count: 5,  phases: "0-6", wallet_pool: validators, includes_shadow: false }
+  ProverBot:       { count: 1,  phases: "0-6", wallet_pool: provers }
+  TechRepBot:      { count: 3,  phases: "2-6", wallet_pool: techreps }
+  TraderBot:       { count: 15, phases: "3-6", wallet_pool: traders }
+  EarnInBot:       { count: 4,  phases: "4-6", wallet_pool: earn_in_candidates, expected_success: 3, expected_fail: 1 }
+  AtomicSwapBot:   { count: 2,  phases: "5-6", wallet_pool: atomic_swap_parties }
+  AdversarialBot:  { count: 5,  phases: "6",   wallet_pool: general_purpose }
+  OracleBot:       { count: 1,  phases: "3-6", wallet_pool: general_purpose, fx_pairs: 10 }
+  BridgeBot:       { count: 4,  phases: "1-6", wallet_pool: general_purpose }
+  ScannerBot:      { count: 1,  phases: "1-6", wallet_pool: general_purpose }
+  bot_fleet_total: 66
+
+monitoring:
+  orchestrator: "testnet006.ac-dc.network"
+  prometheus_scrape_interval: 15s
+  output_artifacts:
+    - "gauntlet-light-phase-{N}-{timestamp}.yaml"
+    - "gauntlet-light-final-report.yaml"
+    - "gauntlet-light-assertions.jsonl"

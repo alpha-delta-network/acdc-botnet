@@ -161,6 +161,7 @@ class ScenarioRunner:
         timeout_sec: int = 600,
         max_bots: int = 10,
         dry_run: bool = False,
+        behavior_override: Optional[str] = None,
     ):
         self.scenario = _normalise(scenario)
         self.alpha_client = AlphaClient(alpha_host)
@@ -169,6 +170,7 @@ class ScenarioRunner:
         self.timeout_sec = timeout_sec
         self.max_bots = max_bots
         self.dry_run = dry_run
+        self.behavior_override = behavior_override
         self._extra: Dict[str, Any] = {
             "funded_wallets": keys.funded_wallets,
             "governor_keys": keys.governor_keys,
@@ -237,14 +239,29 @@ class ScenarioRunner:
                 fut = pool.submit(self._execute_action, action, fmt)
                 futures.append(fut)
 
-            for fut in concurrent.futures.as_completed(futures, timeout=phase_timeout):
-                try:
-                    res = fut.result(timeout=30)
-                    behavior_results.append(res)
-                except concurrent.futures.TimeoutError:
-                    behavior_results.append(BehaviorResult.fail("timeout", "action timed out"))
-                except Exception as e:
-                    behavior_results.append(BehaviorResult.fail("error", str(e)))
+            try:
+                for fut in concurrent.futures.as_completed(futures, timeout=phase_timeout):
+                    try:
+                        res = fut.result(timeout=30)
+                        behavior_results.append(res)
+                    except concurrent.futures.TimeoutError:
+                        behavior_results.append(BehaviorResult.fail("timeout", "action timed out"))
+                    except Exception as e:
+                        behavior_results.append(BehaviorResult.fail("error", str(e)))
+            except concurrent.futures.TimeoutError:
+                # Phase-level timeout — collect already-completed futures
+                pr.timed_out = True
+                for fut in futures:
+                    if fut.done():
+                        try:
+                            res = fut.result(timeout=1)
+                            if not any(r is res for r in behavior_results):
+                                behavior_results.append(res)
+                        except Exception:
+                            pass
+                    else:
+                        behavior_results.append(BehaviorResult.fail("timeout", "phase timed out"))
+                        fut.cancel()
 
         pr.behavior_results = behavior_results
 
@@ -291,7 +308,7 @@ class ScenarioRunner:
     def _execute_action(self, action: Dict[str, Any], fmt: str) -> BehaviorResult:
         """Execute a single action dict."""
         if fmt == "t005":
-            behavior = action.get("behavior", "")
+            behavior = self.behavior_override or action.get("behavior", "")
             params = action.get("params", {})
             wallet_spec = action.get("bot")
             # Find wallet setup from scenario
@@ -307,7 +324,7 @@ class ScenarioRunner:
                 wallet_index,
             )
         else:
-            behavior = action.get("behavior", "")
+            behavior = self.behavior_override or action.get("behavior", "")
             params = action.get("params", {})
             key = action.get("_key", self.keys.funded_wallets[0] if self.keys.funded_wallets else None)
             if key is None:
@@ -412,6 +429,7 @@ def run_scenario_file(
     timeout_sec: int = 300,
     max_bots: int = 5,
     dry_run: bool = False,
+    behavior_override: Optional[str] = None,
 ) -> ScenarioResult:
     """Load a scenario from file and run it. Returns ScenarioResult."""
     try:
@@ -429,5 +447,6 @@ def run_scenario_file(
         timeout_sec=timeout_sec,
         max_bots=max_bots,
         dry_run=dry_run,
+        behavior_override=behavior_override,
     )
     return runner.run()
