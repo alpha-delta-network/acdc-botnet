@@ -13,7 +13,7 @@ pub mod wallet;
 
 // Re-export key types
 pub use actor::{BehaviorResult, Bot, BotContext};
-pub use context::ExecutionContext;
+pub use context::{ExecutionContext, NetworkEndpoints};
 pub use error::{BotError, Result};
 pub use identity::{Identity, IdentityGenerator};
 pub use scheduler::{Scheduler, Task};
