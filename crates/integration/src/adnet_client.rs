@@ -286,6 +286,26 @@ impl AdnetClient {
         .await
     }
 
+    /// Get GCI status for a gid_address (GET /api/governance/gci/{gid_address})
+    pub async fn get_gci_status(&self, gid_address: &str) -> Result<serde_json::Value> {
+        self.get_json(&format!("/api/governance/gci/{}", gid_address))
+            .await
+    }
+
+    /// Get DEX orderbook for a market pair (GET /delta/v1/exchange/orderbook/{market})
+    ///
+    /// `market` is a URL-encoded pair string, e.g. "AX%2FDX" or "AX/DX".
+    pub async fn get_orderbook(&self, market: &str) -> Result<serde_json::Value> {
+        self.get_json(&format!("/delta/v1/exchange/orderbook/{}", market))
+            .await
+    }
+
+    /// Get a transaction by ID (GET /api/v1/transactions/{transaction_id})
+    pub async fn get_transaction(&self, transaction_id: &str) -> Result<serde_json::Value> {
+        self.get_json(&format!("/api/v1/transactions/{}", transaction_id))
+            .await
+    }
+
     // ── Slash evidence ─────────────────────────────────────────────────────
 
     /// Get the balance for a Grumpkin address (GET /api/v1/addresses/{addr}/balance)
