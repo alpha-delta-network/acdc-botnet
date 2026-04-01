@@ -1,12 +1,15 @@
 /// Multi-chain identity generation for Alpha and Delta chains
 ///
 /// Generates cryptographic identities (keypairs and addresses) for both
-/// Alpha (ax1 bech32 addresses) and Delta (dx1 bech32 addresses) chains.
+/// Alpha (ac1 bech32 addresses) and Delta (dx1 bech32 addresses) chains.
 use crate::{BotError, Result};
 use bech32::ToBase32;
 use blake2::{Blake2s256, Digest};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
+use rand::RngCore;
+use rand_chacha::rand_core::SeedableRng;
+use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 
 /// A multi-chain identity for Alpha and Delta protocols
@@ -15,7 +18,7 @@ pub struct Identity {
     /// Unique identifier
     pub id: String,
 
-    /// Alpha chain address (ax1...)
+    /// Alpha chain address (ac1...)
     pub alpha_address: String,
 
     /// Delta chain address (dx1...)
@@ -32,7 +35,7 @@ impl Identity {
         let verifying_key = signing_key.verifying_key();
 
         // Generate addresses for both chains
-        let alpha_address = Self::generate_address(&verifying_key, "ax")?;
+        let alpha_address = Self::generate_address(&verifying_key, "ac1")?;
         let delta_address = Self::generate_address(&verifying_key, "dx")?;
 
         Ok(Self {
@@ -115,12 +118,25 @@ impl IdentityGenerator {
         Self { seed: Some(seed) }
     }
 
-    /// Generate a new identity
+    /// Generate a new identity.
+    ///
+    /// If the generator has a seed, uses `ChaCha8Rng::seed_from_u64` for
+    /// deterministic, reproducible key generation. If no seed is set, samples
+    /// a random u64 from `OsRng` and uses that as the seed, giving each call
+    /// a fresh random identity while still being re-derivable if the seed is
+    /// recorded.
     pub fn generate(&self, bot_id: String) -> Result<Identity> {
-        // For now, use OS random source
-        // TODO: Add deterministic generation from seed for reproducibility
-        let mut rng = OsRng;
-        let secret_bytes: [u8; 32] = rand::Rng::gen(&mut rng);
+        let seed = match self.seed {
+            Some(s) => s,
+            None => {
+                let mut os_rng = OsRng;
+                os_rng.next_u64()
+            }
+        };
+
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let mut secret_bytes = [0u8; 32];
+        rng.fill_bytes(&mut secret_bytes);
         let signing_key = SigningKey::from_bytes(&secret_bytes);
 
         Identity::from_signing_key(bot_id, signing_key)
@@ -156,7 +172,7 @@ mod tests {
             .generate("test-bot-1".to_string())
             .expect("Failed to generate identity");
 
-        assert!(identity.alpha_address.starts_with("ax"));
+        assert!(identity.alpha_address.starts_with("ac1"));
         assert!(identity.delta_address.starts_with("dx"));
         assert!(identity.can_sign());
     }

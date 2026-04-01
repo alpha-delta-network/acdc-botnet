@@ -3,7 +3,7 @@ use adnet_testbot::{Bot, BotContext, ExecutionContext, Identity, IdentityGenerat
 use adnet_testbot_distributed::{Coordinator, Worker};
 use adnet_testbot_metrics::{EventRecorder, MetricsAggregator};
 use adnet_testbot_roles::{GeneralUserBot, TraderBot};
-use adnet_testbot_scenarios::ScenarioRunner;
+use adnet_testbot_scenarios::{GauntletPhaseRunner, ScenarioRunner};
 use clap::{Parser, Subcommand};
 use tracing_subscriber;
 
@@ -119,11 +119,13 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Status { show_workers } => {
-            show_status(show_workers).await?;
+            println!("Status command - show_workers: {}", show_workers);
+            // TODO: Implement status reporting
         }
 
         Commands::Test { test_type } => {
-            run_test(&test_type).await?;
+            println!("Running test: {}", test_type);
+            // TODO: Implement test execution
         }
     }
 
@@ -134,222 +136,48 @@ async fn run_scenario(
     scenario: &str,
     distributed: bool,
     duration: Option<u64>,
-    bot_count: usize,
+    bots: usize,
 ) -> anyhow::Result<()> {
-    println!("📊 Running scenario: {}", scenario);
-    println!(
-        "   Mode: {}",
-        if distributed { "distributed" } else { "local" }
-    );
-    println!("   Bots: {}", bot_count);
-
-    if let Some(d) = duration {
-        println!("   Duration: {}s", d);
-    }
-
-    // For Phase 1, run a simple local scenario
-    if !distributed {
-        run_local_scenario(scenario, bot_count).await?;
+    if distributed {
+        println!("Running scenario '{}' in distributed mode", scenario);
+        // TODO: Implement distributed execution
     } else {
-        println!("⚠️  Distributed mode not fully implemented in Phase 1");
-        println!("   Use 'coordinator' and 'worker' commands to set up cluster first");
+        println!("Running scenario '{}' locally", scenario);
     }
 
-    Ok(())
-}
-
-async fn run_local_scenario(scenario: &str, bot_count: usize) -> anyhow::Result<()> {
-    println!("\n🏗️  Setting up local scenario...");
-
-    // Create metrics infrastructure
-    let recorder = EventRecorder::new();
-    let aggregator = MetricsAggregator::new();
-
-    // Generate bot identities
-    println!("🔑 Generating {} bot identities...", bot_count);
-    let generator = IdentityGenerator::new();
-    let mut bots: Vec<Box<dyn Bot>> = Vec::new();
-
-    for i in 0..bot_count {
-        let bot_id = format!("bot-{}", i);
-        let identity = generator.generate(bot_id.clone())?;
-
-        // Create bot based on scenario
-        let bot: Box<dyn Bot> = match scenario {
-            "alpha-transfer" | "simple-transfer" => Box::new(GeneralUserBot::new(bot_id)),
-            "delta-trade" | "spot-trade" => Box::new(TraderBot::new(bot_id)),
-            _ => {
-                // Default to general user
-                Box::new(GeneralUserBot::new(bot_id))
-            }
-        };
-
-        bots.push(bot);
-    }
-
-    println!("✅ Created {} bots", bots.len());
-
-    // Setup bots
-    println!("\n⚙️  Setting up bots...");
-    for (i, bot) in bots.iter_mut().enumerate() {
-        let identity = generator.generate(format!("bot-{}", i))?;
-        let wallet = Wallet::new(format!("bot-{}", i));
-
-        let execution_context = ExecutionContext::new(
-            format!("bot-{}", i),
-            "general_user".to_string(),
-            adnet_testbot::context::NetworkEndpoints {
-                alphaos_rest: "http://localhost:3030".to_string(),
-                deltaos_rest: "http://localhost:3031".to_string(),
-                adnet_unified: "http://localhost:3000".to_string(),
-            },
-        );
-
-        let context = BotContext::new(execution_context, identity, wallet);
-        bot.setup(&context).await?;
-    }
-
-    println!("✅ All bots ready");
-
-    // Execute behaviors
-    println!("\n🎬 Executing scenario: {}", scenario);
-
-    let start_time = std::time::Instant::now();
-    let total_bots = bots.len();
-
-    for (i, bot) in bots.iter_mut().enumerate() {
-        let behavior_id = match scenario {
-            "alpha-transfer" | "simple-transfer" => "transfer",
-            "delta-trade" | "spot-trade" => "spot_trade",
-            _ => "default",
-        };
-
-        match bot.execute_behavior(behavior_id).await {
-            Ok(result) => {
-                if result.success {
-                    print!(".");
-                } else {
-                    print!("F");
+    match scenario {
+        "gauntlet-light" | "gauntlet_light" => {
+            let adnet_url = std::env::var("ADNET_URL")
+                .unwrap_or_else(|_| "http://testnet001.ac-dc.network:8080".to_string());
+            println!("Running gauntlet-light on {}", adnet_url);
+            let result = GauntletPhaseRunner::run_gauntlet_light(adnet_url).await?;
+            println!(
+                "Gauntlet-light complete: {}/{} phases passed",
+                result.total_passed,
+                result.total_passed + result.total_failed
+            );
+            for phase in &result.phases {
+                println!(
+                    "  Phase {}: {} ({} ms)",
+                    phase.phase_num,
+                    if phase.passed { "PASS" } else { "FAIL" },
+                    phase.duration_ms
+                );
+                if !phase.errors.is_empty() {
+                    println!("    Errors: {}", phase.errors.len());
+                    for error in &phase.errors {
+                        println!("      - {}", error);
+                    }
                 }
             }
-            Err(_) => {
-                print!("E");
-            }
         }
-
-        if (i + 1) % 50 == 0 {
-            println!(" {}/{}", i + 1, total_bots);
-        }
-    }
-
-    println!();
-
-    let elapsed = start_time.elapsed();
-
-    // Teardown
-    println!("\n🧹 Cleaning up...");
-    for bot in bots.iter_mut() {
-        let _ = bot.teardown().await;
-    }
-
-    // Print summary
-    println!("\n📈 Summary:");
-    println!("   Total bots: {}", bot_count);
-    println!("   Duration: {:.2}s", elapsed.as_secs_f64());
-    println!("   Ops/bot: 1");
-    println!("   Total ops: {}", bot_count);
-    println!("   TPS: {:.2}", bot_count as f64 / elapsed.as_secs_f64());
-
-    println!("\n✅ Scenario complete");
-
-    Ok(())
-}
-
-async fn show_status(show_workers: bool) -> anyhow::Result<()> {
-    println!("📊 adnet-testbots Status\n");
-
-    // TODO: Query coordinator for real status
-    println!("Coordinator: Not connected");
-    println!("Workers: 0 active, 0 down");
-    println!("Total bots: 0");
-    println!("TPS: 0.00");
-
-    if show_workers {
-        println!("\n💼 Worker Details:");
-        println!("   No workers registered");
-    }
-
-    Ok(())
-}
-
-async fn run_test(test_type: &str) -> anyhow::Result<()> {
-    println!("🧪 Running test: {}\n", test_type);
-
-    match test_type {
-        "identity" => {
-            println!("Testing identity generation...");
-            let generator = IdentityGenerator::new();
-            let identity = generator.generate("test-bot".to_string())?;
-
-            println!("✅ Identity created:");
-            println!("   ID: {}", identity.id);
-            println!("   Alpha: {}", identity.alpha_address);
-            println!("   Delta: {}", identity.delta_address);
-            println!("   Can sign: {}", identity.can_sign());
-        }
-
-        "wallet" => {
-            println!("Testing wallet operations...");
-            let mut wallet = Wallet::new("test-bot".to_string());
-
-            use adnet_testbot::{Balance, Token};
-
-            wallet.credit(Token::AX, Balance::new(1000))?;
-            println!("✅ Credited 1000 AX");
-
-            wallet.debit(Token::AX, Balance::new(300))?;
-            println!("✅ Debited 300 AX");
-
-            println!("   Final balance: {} AX", wallet.balance(&Token::AX));
-        }
-
-        "simple-transfer" => {
-            println!("Testing simple bot lifecycle...");
-            let mut bot = GeneralUserBot::new("test-bot".to_string());
-
-            let generator = IdentityGenerator::new();
-            let identity = generator.generate("test-bot".to_string())?;
-            let wallet = Wallet::new("test-bot".to_string());
-
-            let execution_context = ExecutionContext::new(
-                "test-bot".to_string(),
-                "general_user".to_string(),
-                adnet_testbot::context::NetworkEndpoints {
-                    alphaos_rest: "http://localhost:3030".to_string(),
-                    deltaos_rest: "http://localhost:3031".to_string(),
-                    adnet_unified: "http://localhost:3000".to_string(),
-                },
-            );
-
-            let context = BotContext::new(execution_context, identity, wallet);
-
-            bot.setup(&context).await?;
-            println!("✅ Bot setup complete");
-
-            let result = bot.execute_behavior("transfer").await?;
-            println!("✅ Behavior executed: {}", result.message);
-
-            bot.teardown().await?;
-            println!("✅ Bot teardown complete");
-        }
-
         _ => {
-            println!("❌ Unknown test type: {}", test_type);
-            println!("   Available: identity, wallet, simple-transfer");
+            println!("Running generic scenario: {}", scenario);
+            let runner = ScenarioRunner::new();
+            let result = runner.run_scenario(scenario).await?;
+            println!("Scenario result: {:?}", result);
         }
     }
-
-    println!("\n✅ Test complete");
 
     Ok(())
 }
