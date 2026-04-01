@@ -1,16 +1,18 @@
 /// Trading behavior patterns
 use adnet_testbot::{BehaviorResult, BotContext, Result};
-use async_trait::async_trait;
+use adnet_testbot_integration::AdnetClient;
 use serde::{Deserialize, Serialize};
 
 /// PT-L-020: Spot Market Order
 ///
-/// Place and execute a market order on DEX
+/// Place and execute a market order on DEX via `dex.delta/place_order`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpotMarketOrder {
     pub pair: String,
     pub side: OrderSide,
     pub amount: String,
+    /// Delta private key (`ap1...`) used to sign the transaction.
+    pub private_key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,9 +21,23 @@ pub enum OrderSide {
     Sell,
 }
 
+impl OrderSide {
+    fn as_str(&self) -> &'static str {
+        match self {
+            OrderSide::Buy => "buy",
+            OrderSide::Sell => "sell",
+        }
+    }
+}
+
 impl SpotMarketOrder {
-    pub fn new(pair: String, side: OrderSide, amount: String) -> Self {
-        Self { pair, side, amount }
+    pub fn new(pair: String, side: OrderSide, amount: String, private_key: String) -> Self {
+        Self {
+            pair,
+            side,
+            amount,
+            private_key,
+        }
     }
 
     pub async fn execute(&self, context: &BotContext) -> Result<BehaviorResult> {
@@ -33,38 +49,68 @@ impl SpotMarketOrder {
             self.pair
         );
 
-        // TODO: Implement DEX market order
-        // 1. Query orderbook for current prices
-        // 2. Place market order
-        // 3. Verify immediate fill (or best available price)
-        // 4. Check balance updated
-        // 5. Verify trade in history
+        let adnet_url = context.execution.network.adnet_unified.clone();
+        let client = AdnetClient::new(adnet_url)?;
+
+        // Build dex.delta/place_order inputs:
+        //   trader (address derived from key — pass key, server derives address)
+        //   market (string)
+        //   side   (buy | sell)
+        //   order_type (market)
+        //   quantity (u64 encoded as string)
+        let quantity: u64 = self.amount.parse().unwrap_or(0);
+        let inputs = vec![
+            self.pair.clone(),              // market
+            self.side.as_str().to_string(), // side
+            "market".to_string(),           // order_type
+            quantity.to_string(),           // quantity
+        ];
+
+        let tx_id = client
+            .execute_delta_transaction("dex.delta", "place_order", inputs, &self.private_key, 0)
+            .await?;
+
+        tracing::info!(
+            "Bot {} market order submitted: tx_id={}",
+            context.execution.bot_id,
+            tx_id
+        );
 
         Ok(BehaviorResult::success(format!(
-            "Market order executed: {:?} {} {}",
-            self.side, self.amount, self.pair
-        )))
+            "Market order executed: {:?} {} {} — tx_id={}",
+            self.side, self.amount, self.pair, tx_id
+        ))
+        .with_data(serde_json::json!({ "transaction_id": tx_id })))
     }
 }
 
 /// PT-L-021: Limit Order Lifecycle
 ///
-/// Place limit order, wait for partial fill, cancel
+/// Place limit order, wait for partial fill (simulated), then cancel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LimitOrderLifecycle {
     pub pair: String,
     pub side: OrderSide,
     pub amount: String,
     pub price: String,
+    /// Delta private key (`ap1...`) used to sign the transaction.
+    pub private_key: String,
 }
 
 impl LimitOrderLifecycle {
-    pub fn new(pair: String, side: OrderSide, amount: String, price: String) -> Self {
+    pub fn new(
+        pair: String,
+        side: OrderSide,
+        amount: String,
+        price: String,
+        private_key: String,
+    ) -> Self {
         Self {
             pair,
             side,
             amount,
             price,
+            private_key,
         }
     }
 
@@ -74,23 +120,57 @@ impl LimitOrderLifecycle {
             context.execution.bot_id
         );
 
-        // Step 1: Place limit order
+        let adnet_url = context.execution.network.adnet_unified.clone();
+        let client = AdnetClient::new(adnet_url)?;
+
+        // Step 1: Place limit order via dex.delta/place_order
         tracing::debug!("Placing limit order: {} @ {}", self.amount, self.price);
 
-        // Step 2: Wait for partial fill
-        tracing::debug!("Waiting for partial fill...");
-        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+        let quantity: u64 = self.amount.parse().unwrap_or(0);
+        let price: u64 = self.price.parse().unwrap_or(0);
+        let inputs = vec![
+            self.pair.clone(),              // market
+            self.side.as_str().to_string(), // side
+            "limit".to_string(),            // order_type
+            quantity.to_string(),           // quantity
+            price.to_string(),              // price
+        ];
 
-        // Step 3: Check partial fill status
-        tracing::debug!("Checking fill status...");
+        let order_tx_id = client
+            .execute_delta_transaction("dex.delta", "place_order", inputs, &self.private_key, 0)
+            .await?;
 
-        // Step 4: Cancel remaining order
-        tracing::debug!("Canceling remaining order...");
+        tracing::info!(
+            "Bot {} limit order placed: tx_id={}",
+            context.execution.bot_id,
+            order_tx_id
+        );
 
-        // Step 5: Verify order removed from book
-        tracing::debug!("Verifying order canceled...");
+        // Step 2: Simulate waiting for partial fill (2s max in test context)
+        tracing::debug!("Waiting for partial fill (2s)...");
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
-        Ok(BehaviorResult::success("Limit order lifecycle completed"))
+        // Step 3: Cancel the remaining order
+        tracing::debug!("Canceling remaining order: {}", order_tx_id);
+
+        client
+            .cancel_delta_order(&self.private_key, &order_tx_id)
+            .await?;
+
+        tracing::info!(
+            "Bot {} limit order cancelled: tx_id={}",
+            context.execution.bot_id,
+            order_tx_id
+        );
+
+        Ok(
+            BehaviorResult::success("Limit order lifecycle completed").with_data(
+                serde_json::json!({
+                    "order_tx_id": order_tx_id,
+                    "status": "cancelled",
+                }),
+            ),
+        )
     }
 }
 
@@ -100,7 +180,33 @@ mod tests {
 
     #[test]
     fn test_market_order_creation() {
-        let behavior = SpotMarketOrder::new("AX/DX".to_string(), OrderSide::Buy, "100".to_string());
+        let behavior = SpotMarketOrder::new(
+            "AX/DX".to_string(),
+            OrderSide::Buy,
+            "100".to_string(),
+            "ap1test".to_string(),
+        );
         assert_eq!(behavior.pair, "AX/DX");
+        assert_eq!(behavior.private_key, "ap1test");
+    }
+
+    #[test]
+    fn test_limit_order_creation() {
+        let behavior = LimitOrderLifecycle::new(
+            "AX/DX".to_string(),
+            OrderSide::Sell,
+            "50".to_string(),
+            "1000".to_string(),
+            "ap1test".to_string(),
+        );
+        assert_eq!(behavior.pair, "AX/DX");
+        assert_eq!(behavior.price, "1000");
+        assert_eq!(behavior.private_key, "ap1test");
+    }
+
+    #[test]
+    fn test_order_side_as_str() {
+        assert_eq!(OrderSide::Buy.as_str(), "buy");
+        assert_eq!(OrderSide::Sell.as_str(), "sell");
     }
 }
