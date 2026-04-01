@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use tracing::info;
 
-use adnet_testbot::{BehaviorResult, Bot, BotContext, ExecutionContext, IdentityGenerator, NetworkEndpoints, Wallet};
+use adnet_testbot::{
+    BehaviorResult, Bot, BotContext, ExecutionContext, IdentityGenerator, NetworkEndpoints, Wallet,
+};
 use adnet_testbot_roles::gauntlet_bots::LightFleet;
 
 // ── YAML schema types ──────────────────────────────────────────────────────
@@ -113,7 +115,10 @@ impl ScenarioRunner {
             steps,
         };
 
-        info!("Loaded scenario '{}' with {} steps", definition.name, definition.bot_count);
+        info!(
+            "Loaded scenario '{}' with {} steps",
+            definition.name, definition.bot_count
+        );
         self.scenarios.push(definition);
         Ok(())
     }
@@ -137,7 +142,10 @@ impl ScenarioRunner {
 
         for step in &definition.steps {
             operations_total += 1;
-            info!("Running step '{}' behavior '{}'", step.phase_name, step.behavior);
+            info!(
+                "Running step '{}' behavior '{}'",
+                step.phase_name, step.behavior
+            );
 
             // Build a minimal bot context for this step
             let bot_id = if step.bot_id.is_empty() {
@@ -200,7 +208,8 @@ impl ScenarioRunner {
             adnet_unified: "http://localhost:8080".to_string(),
         };
 
-        let mut exec = ExecutionContext::new(bot_id.to_string(), "general_user".to_string(), network);
+        let mut exec =
+            ExecutionContext::new(bot_id.to_string(), "general_user".to_string(), network);
         exec = exec.with_scenario(scenario_name.to_string(), None);
 
         let identity = IdentityGenerator::new().generate(bot_id.to_string())?;
@@ -584,18 +593,15 @@ impl GauntletPhaseRunner {
     }
 
     /// Create bot context with network endpoints
-    fn create_bot_context(
-        bot_id: &str,
-        role: &str,
-        adnet_url: &str,
-    ) -> anyhow::Result<BotContext> {
+    fn create_bot_context(bot_id: &str, role: &str, adnet_url: &str) -> anyhow::Result<BotContext> {
         let network = NetworkEndpoints {
             alphaos_rest: adnet_url.to_string(),
             deltaos_rest: adnet_url.to_string(),
             adnet_unified: adnet_url.to_string(),
         };
 
-        let execution_context = ExecutionContext::new(bot_id.to_string(), role.to_string(), network);
+        let execution_context =
+            ExecutionContext::new(bot_id.to_string(), role.to_string(), network);
         let identity = IdentityGenerator::new().generate(bot_id.to_string())?;
         let wallet = Wallet::new(bot_id.to_string());
 
