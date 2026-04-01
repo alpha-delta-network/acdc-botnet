@@ -287,6 +287,134 @@ impl AdnetClient {
             .await
     }
 
+    // ── Delta execute / cancel ─────────────────────────────────────────────
+
+    /// Execute a Delta program function (POST /api/v1/delta/execute).
+    ///
+    /// Used for DEX order placement and other Delta program interactions.
+    /// Returns the `transaction_id` on success, or an error with the message
+    /// from the response body (or the HTTP status if no message is present).
+    pub async fn execute_delta_transaction(
+        &self,
+        program_id: &str,
+        function: &str,
+        inputs: Vec<String>,
+        private_key: &str,
+        priority_fee_microcredits: u64,
+    ) -> Result<String> {
+        #[derive(Serialize)]
+        struct ExecuteRequest<'a> {
+            program_id: &'a str,
+            function: &'a str,
+            inputs: Vec<String>,
+            private_key: &'a str,
+            priority_fee_microcredits: u64,
+        }
+
+        #[derive(Deserialize)]
+        struct ExecuteResponse {
+            transaction_id: Option<String>,
+            accepted: Option<bool>,
+            error: Option<String>,
+        }
+
+        let body = ExecuteRequest {
+            program_id,
+            function,
+            inputs,
+            private_key,
+            priority_fee_microcredits,
+        };
+
+        let url = format!("{}/api/v1/delta/execute", self.base_url);
+        let mut req = self.client.post(&url);
+        for (k, v) in self.auth_header() {
+            req = req.header(k, v);
+        }
+        let response = req
+            .json(&body)
+            .send()
+            .await
+            .context("POST /api/v1/delta/execute")?;
+
+        let status = response.status();
+        let resp: ExecuteResponse = response
+            .json()
+            .await
+            .context("parse response from /api/v1/delta/execute")?;
+
+        if !status.is_success() {
+            let msg = resp.error.unwrap_or_else(|| format!("HTTP {}", status));
+            anyhow::bail!("execute_delta_transaction failed: {}", msg);
+        }
+
+        if resp.accepted == Some(false) {
+            let msg = resp
+                .error
+                .unwrap_or_else(|| "transaction rejected (no error detail)".to_string());
+            anyhow::bail!("execute_delta_transaction rejected: {}", msg);
+        }
+
+        resp.transaction_id.ok_or_else(|| {
+            anyhow::anyhow!("execute_delta_transaction: missing transaction_id in response")
+        })
+    }
+
+    /// Cancel a Delta DEX order (POST /api/v1/delta/cancel).
+    ///
+    /// `private_key` identifies the trader; `order_id` is the transaction ID
+    /// returned by a prior `execute_delta_transaction` call.
+    /// Returns `Ok(())` on success.
+    pub async fn cancel_delta_order(&self, private_key: &str, order_id: &str) -> Result<()> {
+        #[derive(Serialize)]
+        struct CancelRequest<'a> {
+            private_key: &'a str,
+            order_id: &'a str,
+        }
+
+        #[derive(Deserialize)]
+        struct CancelResponse {
+            accepted: Option<bool>,
+            error: Option<String>,
+        }
+
+        let body = CancelRequest {
+            private_key,
+            order_id,
+        };
+
+        let url = format!("{}/api/v1/delta/cancel", self.base_url);
+        let mut req = self.client.post(&url);
+        for (k, v) in self.auth_header() {
+            req = req.header(k, v);
+        }
+        let response = req
+            .json(&body)
+            .send()
+            .await
+            .context("POST /api/v1/delta/cancel")?;
+
+        let status = response.status();
+        let resp: CancelResponse = response
+            .json()
+            .await
+            .context("parse response from /api/v1/delta/cancel")?;
+
+        if !status.is_success() {
+            let msg = resp.error.unwrap_or_else(|| format!("HTTP {}", status));
+            anyhow::bail!("cancel_delta_order failed: {}", msg);
+        }
+
+        if resp.accepted == Some(false) {
+            let msg = resp
+                .error
+                .unwrap_or_else(|| "cancel rejected (no error detail)".to_string());
+            anyhow::bail!("cancel_delta_order rejected: {}", msg);
+        }
+
+        Ok(())
+    }
+
     // ── Version / health ───────────────────────────────────────────────────
 
     /// Get version info (GET /api/v1/version)

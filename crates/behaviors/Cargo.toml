@@ -25,5 +25,9 @@ thiserror = { workspace = true }
 # Tracing
 tracing = { workspace = true }
 
+# Cryptography (for signed governance votes)
+ed25519-dalek = { workspace = true }
+hex = "0.4"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
