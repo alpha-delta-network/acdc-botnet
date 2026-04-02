@@ -10,6 +10,7 @@ use adnet_testbot::{BehaviorResult, Bot, BotContext, BotError, Identity, Result}
 use adnet_testbot_integration::AdnetClient;
 use async_trait::async_trait;
 use hex;
+use sha2::{Digest, Sha256};
 use serde_json::json;
 
 // =============================================================================
@@ -393,9 +394,14 @@ impl Bot for ValidatorBot {
         let client = AdnetClient::new(self.adnet_url.clone())?;
         match behavior_id {
             "validator.register" => {
+                let prover_id_hex = {
+                    let mut h = Sha256::new();
+                    h.update(self.id.as_bytes());
+                    hex::encode(h.finalize())
+                };
                 let resp = client
-                    .register_prover(
-                        &json!({"type":"validator","id":self.id,"is_shadow":self.is_shadow}),
+                    .register_prover_idempotent(
+                        &json!({"prover_id": prover_id_hex, "capacity_csu": 1.0_f64, "stake_dx": 0_u64}),
                     )
                     .await?;
                 Ok(BehaviorResult::success(format!(
@@ -479,8 +485,15 @@ impl Bot for ProverBot {
         let client = AdnetClient::new(self.adnet_url.clone())?;
         match behavior_id {
             "prover.register" => {
+                let prover_id_hex = {
+                    let mut h = Sha256::new();
+                    h.update(self.id.as_bytes());
+                    hex::encode(h.finalize())
+                };
                 let resp = client
-                    .register_prover(&json!({"type":"prover","id":&self.id,"gpu":true}))
+                    .register_prover_idempotent(
+                        &json!({"prover_id": prover_id_hex, "capacity_csu": 1.0_f64, "stake_dx": 0_u64}),
+                    )
                     .await?;
                 Ok(BehaviorResult::success(format!(
                     "prover registered: {:?}",
