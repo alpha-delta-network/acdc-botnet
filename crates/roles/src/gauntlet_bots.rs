@@ -10,8 +10,8 @@ use adnet_testbot::{BehaviorResult, Bot, BotContext, BotError, Identity, Result}
 use adnet_testbot_integration::AdnetClient;
 use async_trait::async_trait;
 use hex;
-use sha2::{Digest, Sha256};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 // =============================================================================
 // USER TRANSACTOR (10/30 bots, phases 1-7)

@@ -13,7 +13,10 @@ pub struct TraderBot {
 
 impl TraderBot {
     pub fn new(id: String) -> Self {
-        Self { id, adnet_url: String::new() }
+        Self {
+            id,
+            adnet_url: String::new(),
+        }
     }
 }
 
@@ -39,10 +42,16 @@ impl Bot for TraderBot {
                         1000,
                     )
                     .await?;
-                Ok(BehaviorResult::success(format!("order placed: {}", transaction_id))
-                    .with_data(json!({"market": "AX/DX", "transaction_id": transaction_id})))
+                Ok(
+                    BehaviorResult::success(format!("order placed: {}", transaction_id))
+                        .with_data(json!({"market": "AX/DX", "transaction_id": transaction_id})),
+                )
             }
-            _ => Err(BotError::NetworkError(format!("TraderBot: unknown behavior {}", behavior_id)).into()),
+            _ => Err(BotError::NetworkError(format!(
+                "TraderBot: unknown behavior {}",
+                behavior_id
+            ))
+            .into()),
         }
     }
 
