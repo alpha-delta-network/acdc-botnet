@@ -125,8 +125,10 @@ impl Bot for GauntletGovernorBot {
                         &json!({"title":"TN006-LIGHT Parameter Coverage Test","description":"Governance lifecycle coverage - parameter update proposal"}),
                     )
                     .await?;
-                Ok(BehaviorResult::success(format!("parameter proposal #{pid}"))
-                    .with_data(json!({ "proposal_id": pid })))
+                Ok(
+                    BehaviorResult::success(format!("parameter proposal #{pid}"))
+                        .with_data(json!({ "proposal_id": pid })),
+                )
             }
             "governance.propose.mint" => {
                 let pid = client
@@ -193,10 +195,10 @@ impl Bot for GauntletGovernorBot {
                         }
                     }
                 }
-                Ok(BehaviorResult::success(format!(
-                    "executed {executed} passed proposals"
-                ))
-                .with_data(json!({ "proposal_id": first_executed_id })))
+                Ok(
+                    BehaviorResult::success(format!("executed {executed} passed proposals"))
+                        .with_data(json!({ "proposal_id": first_executed_id })),
+                )
             }
             "governance.grim_trigger" => {
                 let status = client.get_grim_trigger_status(&self.id).await?;

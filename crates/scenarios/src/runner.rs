@@ -5,15 +5,15 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
 use std::collections::HashSet;
+use std::time::Instant;
 use tracing::info;
 
+use crate::assertions::AssertionRegistry;
 use adnet_testbot::context::NetworkEndpoints;
 use adnet_testbot::{Bot, BotContext, ExecutionContext, IdentityGenerator, Wallet};
-use adnet_testbot_roles::gauntlet_bots::{GauntletFleet, LightFleet};
 use adnet_testbot_integration::{AdnetClient, TraceVerifier};
-use crate::assertions::AssertionRegistry;
+use adnet_testbot_roles::gauntlet_bots::{GauntletFleet, LightFleet};
 
 // =============================================================================
 // Legacy ScenarioRunner (Phase 1 stub — kept for CLI compatibility)
@@ -276,10 +276,7 @@ impl GauntletPhaseRunner {
             .filter_map(|at| self.registry.uc_for_action(at))
             .collect();
 
-        let uc_coverage: Vec<String> = uc_hit
-            .iter()
-            .map(|&s| s.to_string())
-            .collect();
+        let uc_coverage: Vec<String> = uc_hit.iter().map(|&s| s.to_string()).collect();
         let uc_gaps: Vec<String> = phase_uc_ids
             .difference(&uc_hit)
             .map(|&s| s.to_string())
