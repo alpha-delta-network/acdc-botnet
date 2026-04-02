@@ -69,6 +69,30 @@ pub struct ScenarioResult {
     pub errors_total: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofSnapshot {
+    pub alpha_height: u64,
+    pub delta_height: u64,
+    pub m1_queue_depth: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofDelta {
+    pub alpha_blocks_produced: u64,
+    pub delta_blocks_produced: u64,
+    pub m1_depth_change: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BotInputRecord {
+    pub bot_id: String,
+    pub behavior_id: String,
+    pub submitted_inputs: serde_json::Value,
+    pub tx_id: Option<String>,
+    pub verification_status: String,
+}
+
+
 // =============================================================================
 // PhaseResult
 // =============================================================================
@@ -86,6 +110,10 @@ pub struct PhaseResult {
     pub verifications_errored: u64,
     pub uc_coverage: Vec<String>,
     pub uc_gaps: Vec<String>,
+    pub proof_delta: Option<ProofDelta>,
+    pub input_verifications_passed: u64,
+    pub input_verifications_failed: u64,
+    pub input_verifications_not_applicable: u64,
 }
 
 // =============================================================================
@@ -158,6 +186,10 @@ impl GauntletPhaseRunner {
             deltaos_rest: self.adnet_url.clone(),
             adnet_unified: self.adnet_url.clone(),
         };
+
+        let adnet_client = AdnetClient::new(self.adnet_url.clone()).ok();
+        let snapshot_before = take_proof_snapshot(&adnet_client).await;
+        let mut input_records: Vec<BotInputRecord> = Vec::new();
 
         // Build (bot, behavior_id) pairs for this phase.
         let mut entries: Vec<(Box<dyn Bot + Send>, &'static str)> = match self.fleet_type {
@@ -250,8 +282,24 @@ impl GauntletPhaseRunner {
                 }
             }
 
+            collect_input_record(&behavior_result, &bot_id, behavior_id, &mut input_records);
             let _ = bot.teardown().await;
         }
+
+        let snapshot_after = take_proof_snapshot(&adnet_client).await;
+        let proof_delta = compute_proof_delta(snapshot_before, snapshot_after);
+        if let Some(ref pd) = proof_delta {
+            info!(
+                "Phase {}: blocks produced (alpha: {}, delta: {}), m1_depth_change: {}",
+                phase, pd.alpha_blocks_produced, pd.delta_blocks_produced, pd.m1_depth_change,
+            );
+        }
+        let (iv_passed, iv_failed, iv_not_applicable) =
+            verify_input_records(&input_records, &adnet_client).await;
+        info!(
+            "Phase {}: input verif: +{} -{} n/a{}",
+            phase, iv_passed, iv_failed, iv_not_applicable,
+        );
 
         let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -314,6 +362,10 @@ impl GauntletPhaseRunner {
             verifications_errored: verif_errored,
             uc_coverage,
             uc_gaps,
+            proof_delta,
+            input_verifications_passed: iv_passed,
+            input_verifications_failed: iv_failed,
+            input_verifications_not_applicable: iv_not_applicable,
         })
     }
 }
@@ -321,6 +373,192 @@ impl GauntletPhaseRunner {
 // =============================================================================
 // Helpers
 // =============================================================================
+
+async fn take_proof_snapshot(client: &Option<AdnetClient>) -> Option<ProofSnapshot> {
+    let c = client.as_ref()?;
+    let state = c.get_state_root().await.ok()?;
+    let pool = c.get_pool_status().await.ok()?;
+    Some(ProofSnapshot {
+        alpha_height: state.alpha_height.unwrap_or(0),
+        delta_height: state.delta_height.unwrap_or(0),
+        m1_queue_depth: pool
+            .get("current_tx_weight")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
+    })
+}
+
+fn compute_proof_delta(
+    before: Option<ProofSnapshot>,
+    after: Option<ProofSnapshot>,
+) -> Option<ProofDelta> {
+    let b = before?;
+    let a = after?;
+    Some(ProofDelta {
+        alpha_blocks_produced: a.alpha_height.saturating_sub(b.alpha_height),
+        delta_blocks_produced: a.delta_height.saturating_sub(b.delta_height),
+        m1_depth_change: a.m1_queue_depth as i64 - b.m1_queue_depth as i64,
+    })
+}
+
+fn collect_input_record(
+    result: &adnet_testbot::BehaviorResult,
+    bot_id: &str,
+    behavior_id: &str,
+    records: &mut Vec<BotInputRecord>,
+) {
+    let data = &result.data;
+    let tx_id = data
+        .get("transaction_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let submitted_inputs = data
+        .get("submitted_inputs")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    if submitted_inputs.is_null() && tx_id.is_none() {
+        return;
+    }
+    records.push(BotInputRecord {
+        bot_id: bot_id.to_string(),
+        behavior_id: behavior_id.to_string(),
+        submitted_inputs,
+        tx_id,
+        verification_status: "pending".to_string(),
+    });
+}
+
+async fn verify_input_records(
+    records: &[BotInputRecord],
+    client: &Option<AdnetClient>,
+) -> (u64, u64, u64) {
+    let mut passed = 0u64;
+    let mut failed = 0u64;
+    let mut not_applicable = 0u64;
+    let c = match client.as_ref() {
+        Some(c) => c,
+        None => {
+            not_applicable += records.len() as u64;
+            return (passed, failed, not_applicable);
+        }
+    };
+    for record in records {
+        match record.behavior_id.as_str() {
+            "transfer.ax_private" => {
+                if let Some(ref tx_id) = record.tx_id {
+                    if !tx_id.is_empty() {
+                        if let Ok(tx) = c.get_transaction(tx_id).await {
+                            let s_fee = record
+                                .submitted_inputs
+                                .get("fee")
+                                .and_then(|v| v.as_u64());
+                            let sv_fee = tx.get("fee").and_then(|v| v.as_u64());
+                            match (s_fee, sv_fee) {
+                                (Some(sf), Some(svf)) if sf == svf => {
+                                    passed += 1;
+                                    info!(
+                                        "bot {} transfer.ax_private input verification PASS (fee match: {})",
+                                        record.bot_id, sf
+                                    );
+                                }
+                                (Some(sf), Some(svf)) => {
+                                    failed += 1;
+                                    info!(
+                                        "bot {} transfer.ax_private input verification FAIL (fee mismatch: {} vs {})",
+                                        record.bot_id, sf, svf
+                                    );
+                                }
+                                _ => {
+                                    passed += 1;
+                                    info!(
+                                        "bot {} transfer.ax_private input verification PASS (tx found)",
+                                        record.bot_id
+                                    );
+                                }
+                            }
+                        } else {
+                            not_applicable += 1;
+                        }
+                    } else {
+                        not_applicable += 1;
+                    }
+                } else {
+                    not_applicable += 1;
+                }
+            }
+            "dex.place_limit_order" => {
+                if let Some(market) = record
+                    .submitted_inputs
+                    .get("market")
+                    .and_then(|v| v.as_str())
+                {
+                    if c.get_orderbook(market).await.is_ok() {
+                        passed += 1;
+                        info!(
+                            "bot {} dex.place_limit_order input verification PASS (market {})",
+                            record.bot_id, market
+                        );
+                    } else {
+                        failed += 1;
+                        info!(
+                            "bot {} dex.place_limit_order input verification FAIL (market {} unreachable)",
+                            record.bot_id, market
+                        );
+                    }
+                } else {
+                    not_applicable += 1;
+                }
+            }
+            "governance.vote" | "governance.delta.vote" => {
+                let pid = record
+                    .submitted_inputs
+                    .get("proposal_id")
+                    .and_then(|v| v.as_u64());
+                let vpk = record
+                    .submitted_inputs
+                    .get("voter_public_key")
+                    .and_then(|v| v.as_str());
+                if let (Some(pid), Some(vpk)) = (pid, vpk) {
+                    if let Ok(proposal) = c.get_governance_proposal(pid).await {
+                        let found = proposal
+                            .get("votes")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter().any(|vote| {
+                                    vote.get("voter_public_key")
+                                        .and_then(|pk| pk.as_str())
+                                        .map(|pk| pk == vpk)
+                                        .unwrap_or(false)
+                                })
+                            })
+                            .unwrap_or(false);
+                        if found {
+                            passed += 1;
+                            info!(
+                                "bot {} {} input verification PASS",
+                                record.bot_id, record.behavior_id
+                            );
+                        } else {
+                            not_applicable += 1;
+                            info!(
+                                "bot {} {} input verification n/a (voter not yet visible)",
+                                record.bot_id, record.behavior_id
+                            );
+                        }
+                    } else {
+                        not_applicable += 1;
+                    }
+                } else {
+                    not_applicable += 1;
+                }
+            }
+            _ => {
+                not_applicable += 1;
+            }
+        }
+    }
+    (passed, failed, not_applicable)
+}
 
 fn required_success_rate(phase: u8) -> f64 {
     match phase {

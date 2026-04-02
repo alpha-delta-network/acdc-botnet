@@ -53,7 +53,13 @@ impl Bot for UserTransactorBot {
                     .unwrap_or("")
                     .to_string();
                 Ok(BehaviorResult::success(format!("private tx: {}", tx_id))
-                    .with_data(json!({ "transaction_id": tx_id })))
+                    .with_data(json!({
+                        "transaction_id": tx_id,
+                        "submitted_inputs": {
+                            "amount": 1000u64,
+                            "fee": 1000u64,
+                        }
+                    })))
             }
             "transfer.ax_public" => {
                 let resp = client
@@ -173,7 +179,12 @@ impl Bot for GauntletGovernorBot {
                 ))
                 .with_data(json!({
                     "proposal_id": proposal_id,
-                    "voter_public_key": voter_public_key,
+                    "voter_public_key": voter_public_key.clone(),
+                    "submitted_inputs": {
+                        "vote_choice": "yes",
+                        "proposal_id": proposal_id,
+                        "voter_public_key": voter_public_key,
+                    }
                 })))
             }
             "governance.execute" => {
@@ -300,7 +311,12 @@ impl Bot for DeltaVoterBot {
                 ))
                 .with_data(json!({
                     "proposal_id": proposal_id,
-                    "voter_public_key": voter_public_key,
+                    "voter_public_key": voter_public_key.clone(),
+                    "submitted_inputs": {
+                        "vote_choice": "yes",
+                        "proposal_id": proposal_id,
+                        "voter_public_key": voter_public_key,
+                    }
                 })))
             }
             "governance.delta.emphatic_vote" => {
