@@ -242,6 +242,20 @@ impl AdnetClient {
         self.get_json("/api/v1/pool/status").await
     }
 
+    /// Get prover registration challenge nonce (GET /api/v1/prover/challenge?prover_id=...)
+    ///
+    /// Returns the hex-encoded 32-byte nonce that must be signed with the prover's
+    /// ed25519 private key and included in POST /api/v1/prover/register.
+    pub async fn get_prover_challenge(&self, prover_id_hex: &str) -> Result<String> {
+        #[derive(serde::Deserialize)]
+        struct ChallengeResponse {
+            nonce: String,
+        }
+        let path = format!("/api/v1/prover/challenge?prover_id={}", prover_id_hex);
+        let resp: ChallengeResponse = self.get_json(&path).await?;
+        Ok(resp.nonce)
+    }
+
     /// Register a prover (POST /api/v1/prover/register)
     pub async fn register_prover(&self, body: &serde_json::Value) -> Result<serde_json::Value> {
         self.post_json("/api/v1/prover/register", body).await

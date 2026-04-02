@@ -9,9 +9,9 @@
 use adnet_testbot::{BehaviorResult, Bot, BotContext, BotError, Identity, Result};
 use adnet_testbot_integration::AdnetClient;
 use async_trait::async_trait;
+use ed25519_dalek::SigningKey;
 use hex;
 use serde_json::json;
-use ed25519_dalek::SigningKey;
 use sha2::{Digest, Sha256};
 
 // =============================================================================
@@ -369,17 +369,21 @@ impl Bot for DeltaVoterBot {
 // VALIDATOR BOT (5 active / 7 total)
 // =============================================================================
 
-/// Derive a deterministic (prover_id, pubkey) pair from a bot identifier.
+/// Derive a deterministic (prover_id, pubkey, signing_key) triple from a bot identifier.
 ///
 /// - seed = SHA-256(bot_id) — 32 bytes used as ed25519 signing key seed
 /// - pubkey = ed25519 verifying key bytes (32 bytes)
 /// - prover_id = SHA-256(pubkey) hex-encoded (64 chars)
-fn derive_prover_identity(bot_id: &str) -> (String, String) {
+fn derive_prover_identity(bot_id: &str) -> (String, String, SigningKey) {
     let seed: [u8; 32] = Sha256::digest(bot_id.as_bytes()).into();
     let signing_key = SigningKey::from_bytes(&seed);
     let pubkey_bytes = signing_key.verifying_key().to_bytes();
     let prover_id: [u8; 32] = Sha256::digest(&pubkey_bytes).into();
-    (hex::encode(prover_id), hex::encode(pubkey_bytes))
+    (
+        hex::encode(prover_id),
+        hex::encode(pubkey_bytes),
+        signing_key,
+    )
 }
 
 pub struct ValidatorBot {
@@ -408,12 +412,30 @@ impl Bot for ValidatorBot {
         let client = AdnetClient::new(self.adnet_url.clone())?;
         match behavior_id {
             "validator.register" => {
-                let (prover_id_hex, pubkey_hex) = derive_prover_identity(&self.id);
-                let resp = client
-                    .register_prover_idempotent(
-                        &json!({"prover_id": prover_id_hex, "pubkey": pubkey_hex, "capacity_csu": 1.0_f64, "stake_dx": 0_u64}),
-                    )
-                    .await?;
+                let (prover_id_hex, pubkey_hex, signing_key) = derive_prover_identity(&self.id);
+                // Step 1: get challenge nonce
+                let nonce_hex = client
+                    .get_prover_challenge(&prover_id_hex)
+                    .await
+                    .unwrap_or_else(|_| String::new());
+                // Step 2: sign nonce (if challenge obtained)
+                let sig_hex = if !nonce_hex.is_empty() {
+                    if let Ok(nonce_bytes) = hex::decode(&nonce_hex) {
+                        use ed25519_dalek::Signer;
+                        hex::encode(signing_key.sign(&nonce_bytes).to_bytes())
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                };
+                // Step 3: register (with signature if challenge was obtained)
+                let body = if !sig_hex.is_empty() {
+                    json!({"prover_id": prover_id_hex, "pubkey": pubkey_hex, "signature": sig_hex, "capacity_csu": 1.0_f64, "stake_dx": 0_u64})
+                } else {
+                    json!({"prover_id": prover_id_hex, "pubkey": pubkey_hex, "capacity_csu": 1.0_f64, "stake_dx": 0_u64})
+                };
+                let resp = client.register_prover_idempotent(&body).await?;
                 Ok(BehaviorResult::success(format!(
                     "validator registered: {:?}",
                     resp.get("status")
@@ -495,12 +517,30 @@ impl Bot for ProverBot {
         let client = AdnetClient::new(self.adnet_url.clone())?;
         match behavior_id {
             "prover.register" => {
-                let (prover_id_hex, pubkey_hex) = derive_prover_identity(&self.id);
-                let resp = client
-                    .register_prover_idempotent(
-                        &json!({"prover_id": prover_id_hex, "pubkey": pubkey_hex, "capacity_csu": 1.0_f64, "stake_dx": 0_u64}),
-                    )
-                    .await?;
+                let (prover_id_hex, pubkey_hex, signing_key) = derive_prover_identity(&self.id);
+                // Step 1: get challenge nonce
+                let nonce_hex = client
+                    .get_prover_challenge(&prover_id_hex)
+                    .await
+                    .unwrap_or_else(|_| String::new());
+                // Step 2: sign nonce (if challenge obtained)
+                let sig_hex = if !nonce_hex.is_empty() {
+                    if let Ok(nonce_bytes) = hex::decode(&nonce_hex) {
+                        use ed25519_dalek::Signer;
+                        hex::encode(signing_key.sign(&nonce_bytes).to_bytes())
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                };
+                // Step 3: register (with signature if challenge was obtained)
+                let body = if !sig_hex.is_empty() {
+                    json!({"prover_id": prover_id_hex, "pubkey": pubkey_hex, "signature": sig_hex, "capacity_csu": 1.0_f64, "stake_dx": 0_u64})
+                } else {
+                    json!({"prover_id": prover_id_hex, "pubkey": pubkey_hex, "capacity_csu": 1.0_f64, "stake_dx": 0_u64})
+                };
+                let resp = client.register_prover_idempotent(&body).await?;
                 Ok(BehaviorResult::success(format!(
                     "prover registered: {:?}",
                     resp.get("status")
