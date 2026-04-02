@@ -336,9 +336,12 @@ impl AdnetClient {
 
     /// Get DEX orderbook for a market pair (GET /delta/v1/exchange/orderbook/{market})
     ///
-    /// `market` is a URL-encoded pair string, e.g. "AX%2FDX" or "AX/DX".
+    /// `market` may contain slashes (e.g. "AX/DX"); they are percent-encoded before
+    /// building the URL so the slash is treated as part of the market name, not a
+    /// path separator.
     pub async fn get_orderbook(&self, market: &str) -> Result<serde_json::Value> {
-        self.get_json(&format!("/delta/v1/exchange/orderbook/{}", market))
+        let encoded = market.replace('/', "%2F");
+        self.get_json(&format!("/delta/v1/exchange/orderbook/{}", encoded))
             .await
     }
 
