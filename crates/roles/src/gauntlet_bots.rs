@@ -11,6 +11,7 @@ use adnet_testbot_integration::AdnetClient;
 use async_trait::async_trait;
 use hex;
 use serde_json::json;
+use ed25519_dalek::SigningKey;
 use sha2::{Digest, Sha256};
 
 // =============================================================================
@@ -368,6 +369,19 @@ impl Bot for DeltaVoterBot {
 // VALIDATOR BOT (5 active / 7 total)
 // =============================================================================
 
+/// Derive a deterministic (prover_id, pubkey) pair from a bot identifier.
+///
+/// - seed = SHA-256(bot_id) — 32 bytes used as ed25519 signing key seed
+/// - pubkey = ed25519 verifying key bytes (32 bytes)
+/// - prover_id = SHA-256(pubkey) hex-encoded (64 chars)
+fn derive_prover_identity(bot_id: &str) -> (String, String) {
+    let seed: [u8; 32] = Sha256::digest(bot_id.as_bytes()).into();
+    let signing_key = SigningKey::from_bytes(&seed);
+    let pubkey_bytes = signing_key.verifying_key().to_bytes();
+    let prover_id: [u8; 32] = Sha256::digest(&pubkey_bytes).into();
+    (hex::encode(prover_id), hex::encode(pubkey_bytes))
+}
+
 pub struct ValidatorBot {
     id: String,
     adnet_url: String,
@@ -394,14 +408,10 @@ impl Bot for ValidatorBot {
         let client = AdnetClient::new(self.adnet_url.clone())?;
         match behavior_id {
             "validator.register" => {
-                let prover_id_hex = {
-                    let mut h = Sha256::new();
-                    h.update(self.id.as_bytes());
-                    hex::encode(h.finalize())
-                };
+                let (prover_id_hex, pubkey_hex) = derive_prover_identity(&self.id);
                 let resp = client
                     .register_prover_idempotent(
-                        &json!({"prover_id": prover_id_hex, "capacity_csu": 1.0_f64, "stake_dx": 0_u64}),
+                        &json!({"prover_id": prover_id_hex, "pubkey": pubkey_hex, "capacity_csu": 1.0_f64, "stake_dx": 0_u64}),
                     )
                     .await?;
                 Ok(BehaviorResult::success(format!(
@@ -485,14 +495,10 @@ impl Bot for ProverBot {
         let client = AdnetClient::new(self.adnet_url.clone())?;
         match behavior_id {
             "prover.register" => {
-                let prover_id_hex = {
-                    let mut h = Sha256::new();
-                    h.update(self.id.as_bytes());
-                    hex::encode(h.finalize())
-                };
+                let (prover_id_hex, pubkey_hex) = derive_prover_identity(&self.id);
                 let resp = client
                     .register_prover_idempotent(
-                        &json!({"prover_id": prover_id_hex, "capacity_csu": 1.0_f64, "stake_dx": 0_u64}),
+                        &json!({"prover_id": prover_id_hex, "pubkey": pubkey_hex, "capacity_csu": 1.0_f64, "stake_dx": 0_u64}),
                     )
                     .await?;
                 Ok(BehaviorResult::success(format!(
