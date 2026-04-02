@@ -92,7 +92,6 @@ pub struct BotInputRecord {
     pub verification_status: String,
 }
 
-
 // =============================================================================
 // PhaseResult
 // =============================================================================
@@ -448,10 +447,7 @@ async fn verify_input_records(
                 if let Some(ref tx_id) = record.tx_id {
                     if !tx_id.is_empty() {
                         if let Ok(tx) = c.get_transaction(tx_id).await {
-                            let s_fee = record
-                                .submitted_inputs
-                                .get("fee")
-                                .and_then(|v| v.as_u64());
+                            let s_fee = record.submitted_inputs.get("fee").and_then(|v| v.as_u64());
                             let sv_fee = tx.get("fee").and_then(|v| v.as_u64());
                             match (s_fee, sv_fee) {
                                 (Some(sf), Some(svf)) if sf == svf => {
