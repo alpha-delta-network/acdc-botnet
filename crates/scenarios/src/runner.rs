@@ -6,11 +6,14 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
+use std::collections::HashSet;
 use tracing::info;
 
 use adnet_testbot::context::NetworkEndpoints;
 use adnet_testbot::{Bot, BotContext, ExecutionContext, IdentityGenerator, Wallet};
 use adnet_testbot_roles::gauntlet_bots::{GauntletFleet, LightFleet};
+use adnet_testbot_integration::{AdnetClient, TraceVerifier};
+use crate::assertions::AssertionRegistry;
 
 // =============================================================================
 // Legacy ScenarioRunner (Phase 1 stub — kept for CLI compatibility)
@@ -78,6 +81,11 @@ pub struct PhaseResult {
     pub bots_run: usize,
     pub errors: u64,
     pub duration_ms: u64,
+    pub verifications_passed: u64,
+    pub verifications_failed: u64,
+    pub verifications_errored: u64,
+    pub uc_coverage: Vec<String>,
+    pub uc_gaps: Vec<String>,
 }
 
 // =============================================================================
@@ -111,14 +119,21 @@ pub struct GauntletPhaseRunner {
     pub adnet_url: String,
     pub fleet_type: FleetType,
     pub output_dir: String,
+    verifier: Option<TraceVerifier>,
+    registry: AssertionRegistry,
 }
 
 impl GauntletPhaseRunner {
     pub fn new(adnet_url: String, fleet_type: FleetType, output_dir: String) -> Self {
+        let verifier = AdnetClient::new(adnet_url.clone())
+            .ok()
+            .map(TraceVerifier::new);
         Self {
             adnet_url,
             fleet_type,
             output_dir,
+            verifier,
+            registry: AssertionRegistry::canonical(),
         }
     }
 
@@ -153,6 +168,15 @@ impl GauntletPhaseRunner {
         let bots_run = entries.len();
         let mut errors: u64 = 0;
 
+        // Pre-collect behavior IDs for gap analysis
+        let behavior_ids_for_phase: Vec<&'static str> = entries.iter().map(|(_, b)| *b).collect();
+
+        // Verification tracking
+        let mut verif_passed: u64 = 0;
+        let mut verif_failed: u64 = 0;
+        let mut verif_errored: u64 = 0;
+        let mut uc_hit: HashSet<&'static str> = HashSet::new();
+
         for (bot, behavior_id) in entries.iter_mut() {
             let bot_id = bot.id().to_owned();
             let role = bot.role().to_owned();
@@ -164,8 +188,9 @@ impl GauntletPhaseRunner {
                 continue;
             }
 
-            match bot.execute_behavior(behavior_id).await {
-                Ok(result) if result.success => {}
+            // Execute behavior and capture result
+            let behavior_result = match bot.execute_behavior(behavior_id).await {
+                Ok(result) if result.success => result,
                 Ok(result) => {
                     // Phase 6 adversarial: expected-rejection results are fine.
                     if phase != 6 {
@@ -175,6 +200,7 @@ impl GauntletPhaseRunner {
                         );
                         errors += 1;
                     }
+                    result
                 }
                 Err(e) => {
                     if phase != 6 {
@@ -183,6 +209,43 @@ impl GauntletPhaseRunner {
                             phase, bot_id, behavior_id, e
                         );
                         errors += 1;
+                    }
+                    let _ = bot.teardown().await;
+                    continue;
+                }
+            };
+
+            // ── Verification (non-blocking, errors do NOT affect phase success) ──
+            if let (Some(verifier), Some(action_type)) =
+                (&self.verifier, behavior_to_action_type(behavior_id))
+            {
+                let vctx = extract_verification_context(&behavior_result.data);
+                match verifier.verify(action_type, &vctx).await {
+                    vr if vr.error.is_some() => {
+                        verif_errored += 1;
+                        info!(
+                            "Phase {}: bot {} UC {} verification error: {}",
+                            phase,
+                            bot_id,
+                            vr.uc_id,
+                            vr.error.as_deref().unwrap_or("?")
+                        );
+                    }
+                    vr if vr.passed => {
+                        verif_passed += 1;
+                        uc_hit.insert(vr.uc_id);
+                        info!(
+                            "Phase {}: bot {} UC {} PASS: {}",
+                            phase, bot_id, vr.uc_id, vr.evidence
+                        );
+                    }
+                    vr => {
+                        verif_failed += 1;
+                        uc_hit.insert(vr.uc_id);
+                        info!(
+                            "Phase {}: bot {} UC {} FAIL: {}",
+                            phase, bot_id, vr.uc_id, vr.evidence
+                        );
                     }
                 }
             }
@@ -203,14 +266,44 @@ impl GauntletPhaseRunner {
             (1.0 - error_rate) >= required_rate
         };
 
+        // Compute MECE coverage gap relative to this phase's verifiable UCs
+        let phase_action_types: HashSet<&'static str> = behavior_ids_for_phase
+            .iter()
+            .filter_map(|bid| behavior_to_action_type(bid))
+            .collect();
+        let phase_uc_ids: HashSet<&'static str> = phase_action_types
+            .iter()
+            .filter_map(|at| self.registry.uc_for_action(at))
+            .collect();
+
+        let uc_coverage: Vec<String> = uc_hit
+            .iter()
+            .map(|&s| s.to_string())
+            .collect();
+        let uc_gaps: Vec<String> = phase_uc_ids
+            .difference(&uc_hit)
+            .map(|&s| s.to_string())
+            .collect();
+
+        if !uc_gaps.is_empty() {
+            info!(
+                "Phase {}: UC GAPS (not exercised this phase): {:?}",
+                phase, uc_gaps
+            );
+        }
+
         info!(
-            "Phase {}: {} ({}/{} bots ok, {} errors, {}ms)",
+            "Phase {}: {} ({}/{} bots ok, {} errors, {}ms) | verif: +{} -{} !{} | UCs: {}",
             phase,
             if success { "PASS" } else { "FAIL" },
             bots_run as u64 - errors.min(bots_run as u64),
             bots_run,
             errors,
             duration_ms,
+            verif_passed,
+            verif_failed,
+            verif_errored,
+            uc_coverage.join(","),
         );
 
         Ok(PhaseResult {
@@ -219,6 +312,11 @@ impl GauntletPhaseRunner {
             bots_run,
             errors,
             duration_ms,
+            verifications_passed: verif_passed,
+            verifications_failed: verif_failed,
+            verifications_errored: verif_errored,
+            uc_coverage,
+            uc_gaps,
         })
     }
 }
@@ -245,6 +343,54 @@ fn make_context(
     let wallet = Wallet::new(bot_id.to_string());
     let execution = ExecutionContext::new(bot_id.to_string(), role.to_string(), network.clone());
     Ok(BotContext::new(execution, identity, wallet))
+}
+
+// ── Verification helpers ─────────────────────────────────────────────────────
+
+/// Map a dotted gauntlet behavior_id to a TraceVerifier action_type string.
+/// Returns None for behaviors that have no UC verification rule.
+fn behavior_to_action_type(behavior_id: &str) -> Option<&'static str> {
+    match behavior_id {
+        "transfer.ax_private" => Some("private_transfer"),
+        "governance.propose.parameter" => Some("governance_proposal_create"),
+        "governance.delta.vote" => Some("governance_vote"),
+        "governance.vote" => Some("governance_vote"),
+        "governance.execute" => Some("governance_execute"),
+        "governance.grim_trigger" => Some("grim_trigger_check"),
+        "governance.apology" => Some("apology_lifecycle"),
+        "dex.place_limit_order" => Some("dex_limit_order"),
+        _ => None,
+    }
+}
+
+/// Extract a VerificationContext from a BehaviorResult's JSON data payload.
+/// All fields are optional — missing keys produce None (not an error).
+fn extract_verification_context(
+    data: &serde_json::Value,
+) -> adnet_testbot_integration::trace_verifier::VerificationContext {
+    adnet_testbot_integration::trace_verifier::VerificationContext {
+        proposal_id: data.get("proposal_id").and_then(|v| v.as_u64()),
+        voter_public_key: data
+            .get("voter_public_key")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        gid_address: data
+            .get("gid_address")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        market: data
+            .get("market")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        transaction_id: data
+            .get("transaction_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        address: data
+            .get("address")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+    }
 }
 
 // ── Light fleet phase dispatch ───────────────────────────────────────────────

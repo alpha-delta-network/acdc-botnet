@@ -45,10 +45,13 @@ impl Bot for UserTransactorBot {
                         &json!({"chain_id":"alpha","encrypted_tx":"deadbeef00","fee_estimate":1000}),
                     )
                     .await?;
-                Ok(BehaviorResult::success(format!(
-                    "private tx: {:?}",
-                    resp.get("tx_id")
-                )))
+                let tx_id = resp
+                    .get("tx_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                Ok(BehaviorResult::success(format!("private tx: {}", tx_id))
+                    .with_data(json!({ "transaction_id": tx_id })))
             }
             "transfer.ax_public" => {
                 let resp = client
@@ -122,9 +125,8 @@ impl Bot for GauntletGovernorBot {
                         &json!({"title":"TN006-LIGHT Parameter Coverage Test","description":"Governance lifecycle coverage - parameter update proposal"}),
                     )
                     .await?;
-                Ok(BehaviorResult::success(format!(
-                    "parameter proposal #{pid}"
-                )))
+                Ok(BehaviorResult::success(format!("parameter proposal #{pid}"))
+                    .with_data(json!({ "proposal_id": pid })))
             }
             "governance.propose.mint" => {
                 let pid = client
@@ -152,8 +154,9 @@ impl Bot for GauntletGovernorBot {
                 message.push(b'Y');
                 let sig = identity.sign(&message)?;
                 let vk = identity.verifying_key()?;
+                let voter_public_key = hex::encode(vk.as_bytes());
                 let vote_body = json!({
-                    "voter_public_key": hex::encode(vk.as_bytes()),
+                    "voter_public_key": voter_public_key.clone(),
                     "vote": "yes",
                     "signature": hex::encode(sig.to_bytes()),
                 });
@@ -163,12 +166,17 @@ impl Bot for GauntletGovernorBot {
                 Ok(BehaviorResult::success(format!(
                     "governor voted on proposal #{proposal_id}: yes={:?}",
                     tally.get("yes")
-                )))
+                ))
+                .with_data(json!({
+                    "proposal_id": proposal_id,
+                    "voter_public_key": voter_public_key,
+                })))
             }
             "governance.execute" => {
                 let resp = client.get_governance_proposals().await?;
                 let proposals = resp.proposals.unwrap_or_default();
                 let mut executed = 0usize;
+                let mut first_executed_id: Option<u64> = None;
                 for p in &proposals {
                     if p.get("status").and_then(|v| v.as_str()) == Some("passed") {
                         if let Some(id) = p.get("id").and_then(|v| v.as_u64()) {
@@ -179,19 +187,24 @@ impl Bot for GauntletGovernorBot {
                                 )
                                 .await;
                             executed += 1;
+                            if first_executed_id.is_none() {
+                                first_executed_id = Some(id);
+                            }
                         }
                     }
                 }
                 Ok(BehaviorResult::success(format!(
                     "executed {executed} passed proposals"
-                )))
+                ))
+                .with_data(json!({ "proposal_id": first_executed_id })))
             }
             "governance.grim_trigger" => {
                 let status = client.get_grim_trigger_status(&self.id).await?;
                 Ok(BehaviorResult::success(format!(
                     "grim trigger status: {:?}",
                     status.get("state")
-                )))
+                ))
+                .with_data(json!({ "gid_address": self.id })))
             }
             "governance.apology" => {
                 let pid = client
@@ -199,7 +212,8 @@ impl Bot for GauntletGovernorBot {
                         &json!({"title":"Apology Restore","description":format!("Apology restore for crippled GID {}", &self.id)}),
                     )
                     .await?;
-                Ok(BehaviorResult::success(format!("apology proposal #{pid}")))
+                Ok(BehaviorResult::success(format!("apology proposal #{pid}"))
+                    .with_data(json!({ "proposal_id": pid })))
             }
             _ => Err(BotError::NetworkError(format!(
                 "GauntletGovernor: unknown behavior {behavior_id}"
@@ -267,8 +281,9 @@ impl Bot for DeltaVoterBot {
                 message.push(b'Y');
                 let sig = identity.sign(&message)?;
                 let vk = identity.verifying_key()?;
+                let voter_public_key = hex::encode(vk.as_bytes());
                 let vote_body = json!({
-                    "voter_public_key": hex::encode(vk.as_bytes()),
+                    "voter_public_key": voter_public_key.clone(),
                     "vote": "yes",
                     "signature": hex::encode(sig.to_bytes()),
                 });
@@ -278,7 +293,11 @@ impl Bot for DeltaVoterBot {
                 Ok(BehaviorResult::success(format!(
                     "voted yes on proposal #{proposal_id}: yes={:?}",
                     tally.get("yes")
-                )))
+                ))
+                .with_data(json!({
+                    "proposal_id": proposal_id,
+                    "voter_public_key": voter_public_key,
+                })))
             }
             "governance.delta.emphatic_vote" => {
                 // Vote yes on every active proposal (emphatic = covers all active)
