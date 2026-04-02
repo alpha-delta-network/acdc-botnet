@@ -247,6 +247,34 @@ impl AdnetClient {
         self.post_json("/api/v1/prover/register", body).await
     }
 
+    /// Register a prover, treating 409 CONFLICT as success (idempotent re-registration).
+    pub async fn register_prover_idempotent(
+        &self,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let url = format!("{}/api/v1/prover/register", self.base_url);
+        let mut req = self.client.post(&url);
+        for (k, v) in self.auth_header() {
+            req = req.header(k, v);
+        }
+        let response = req
+            .json(body)
+            .send()
+            .await
+            .context("POST /api/v1/prover/register")?;
+        let status = response.status();
+        if status == reqwest::StatusCode::CONFLICT {
+            return Ok(serde_json::json!({"status": "already_registered"}));
+        }
+        if !status.is_success() {
+            anyhow::bail!("POST /api/v1/prover/register returned {}", status);
+        }
+        response
+            .json::<serde_json::Value>()
+            .await
+            .context("parse response from /api/v1/prover/register")
+    }
+
     // ── Governance ─────────────────────────────────────────────────────────
 
     /// Submit a governance proposal (POST /api/v1/governance/proposals)
