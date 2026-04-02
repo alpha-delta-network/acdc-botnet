@@ -2,7 +2,7 @@ when:
   - event: [push, pull_request, manual]
 
 variables:
-  - &rust_image 'rust-builder:1.92.0-ci'
+  - &rust_image 'ci.ac-dc.network:5000/rust-builder:1.92.0-ci'
 
 steps:
   - name: format-check
