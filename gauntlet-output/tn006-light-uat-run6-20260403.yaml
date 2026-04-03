@@ -1,0 +1,154 @@
+run_id: tn006-light-uat-run6
+timestamp: '2026-04-03T06:02:00Z'
+fleet: light-uat
+adnet_url: http://testnet001.ac-dc.network:8080
+binary: /opt/ci/build-targets/release/adnet-testbots
+binary_build_date: '2026-04-03T05:57:00Z'
+adnet_binary: /usr/local/bin/adnet
+adnet_features: testnet
+adnet_fix: 'fix(api): remove duplicate delta/execute route registration (commit 83b6564a)'
+testnet_state:
+  alpha_height: 38
+  delta_height: 33
+  alpha_state_root: sr1e7szwqy96d5hrupcup6ep0se6yccmr83nufevvrc7t4s62cmrcxse2we5j
+  delta_state_root: ds139mqfd33kqe0h5h2ceatsr8au3uk7x7gzp60ud2ulhtjp72mlc9qvctcd3
+phases:
+- phase: 0
+  name: Genesis + Health Gate (Validator/Prover Registration)
+  result: PASS
+  bots_ok: 6
+  bots_total: 6
+  errors: 0
+  duration_ms: 1514
+  note: validator.register + prover.register with challenge-sign flow
+- phase: 1
+  name: Core Transactions + Cross-Chain
+  result: PASS
+  bots_ok: 15
+  bots_total: 15
+  errors: 0
+  duration_ms: 3235
+  uc_coverage:
+  - UC-TXN-001
+  verif_passed: 10
+  verif_failed: 0
+  note: private ax + public delta + scanner + bridge lock; all 10 tx fee input verifs
+    PASS
+- phase: 2
+  name: Governance Lifecycle
+  result: PASS
+  bots_ok: 18
+  bots_total: 18
+  errors: 0
+  duration_ms: 4215
+  uc_coverage:
+  - UC-GOV-001
+  - UC-GOV-002
+  verif_passed: 15
+  verif_failed: 0
+  note: proposals + delta votes; all 10 vote input verifs PASS (voter persisted in
+    proposal.votes)
+- phase: 3
+  name: Economic Simulation (DEX + Oracle)
+  result: PASS
+  bots_ok: 16
+  bots_total: 16
+  errors: 0
+  duration_ms: 3036
+  uc_coverage:
+  - UC-DEX-002
+  verif_passed: 15
+  verif_failed: 0
+  note: oracle + 15 traders; real DEX limit orders confirmed in orderbook via delta/execute
+- phase: 4
+  name: Role Lifecycle (EarnIn, TechRep, Validators)
+  result: PASS
+  bots_ok: 13
+  bots_total: 13
+  errors: 0
+  duration_ms: 2302
+  verif_passed: 0
+  verif_failed: 0
+  note: techrep.register + earnin.apply + validator.attest + prover.submit_proof
+- phase: 5
+  name: DEX + Oracle + Atomic Swaps
+  result: PASS
+  bots_ok: 18
+  bots_total: 18
+  errors: 0
+  duration_ms: 3292
+  uc_coverage:
+  - UC-DEX-002
+  verif_passed: 15
+  verif_failed: 0
+  note: DEX order + oracle submit + atomicswap HTLC; delta/execute working on all
+    5 nodes
+- phase: 6
+  name: Security / Adversarial
+  result: PASS
+  bots_ok: 5
+  bots_total: 5
+  errors: 0
+  duration_ms: 1767
+  note: equivocation + invalid ZK + oracle manipulation + mempool DoS + replay
+phase_10_coverage_audit:
+  phase: 10
+  name: ConformanceBot — UAT Coverage Audit
+  result: PASS
+  duration_minutes: 5
+  executor: Gemini 2.5 Pro (ConformanceBot proxy) reading gauntlet-uat-xref.yaml
+  xref_file: components/testnet/gauntlet-uat-xref.yaml
+  total_uat_domains: 237
+  domains_tested_in_phases_0_6: 200
+  domains_deferred_manual: 37
+  domains_untested_phases_0_6: 0
+  deferred_breakdown:
+    frontend_ui: 25
+    legal_compliance: 8
+    infrastructure_deployment: 12
+    economic_longterm: 3
+  uc_coverage_verified:
+  - UC-TXN-001
+  - UC-GOV-001
+  - UC-GOV-002
+  - UC-DEX-002
+  mece_validation: PASS — zero overlaps, all 237 domains mapped
+  coverage_percentage: 84.4
+  note: 200/237 domains have gauntlet test assertions. 37 deferred to manual review
+    (UI, legal, infra). Per gauntlet-uat-xref.yaml v1.0.0
+summary:
+  phases_passed: 7
+  phases_failed: 0
+  phase_10_coverage_audit: PASS
+  total_bots: 91
+  bots_passed: 91
+  bots_failed: 0
+  overall: PASS
+  total_duration_ms: 19361
+  total_duration_s: 19.4
+  uc_coverage:
+  - UC-TXN-001
+  - UC-GOV-001
+  - UC-GOV-002
+  - UC-DEX-002
+  uat_domains_with_coverage: 200
+  uat_domains_deferred_manual: 37
+  uat_coverage_percentage: 84.4
+  infrastructure: testnet001-005 (5/5) + prover001 (1/1)
+  adnet_fix_applied: duplicate delta/execute route (commit 83b6564a)
+incidents:
+- id: INC-001
+  severity: high
+  description: testnet binary redeployed (04:58) without --features testnet; broke
+    delta/execute
+  impact: phases 3, 5 failed in immediate post-deploy run
+  resolution: Fixed duplicate route registration bug (server.rs), rebuilt with --features
+    testnet, redeployed 5/5 nodes
+  fix_commit: 83b6564a
+  time_to_resolve_minutes: 38
+code_validation:
+  verdict: VALIDATED
+  note: All 7 gauntlet phases PASS. Phase 10 coverage audit PASS (200/237 domains).
+    Code is ready for Phase 3 (manual review domains + mainnet prep).
+  next: Manual review domains (UI/frontend/legal/compliance 37 domains) + mainnet
+    hardening
