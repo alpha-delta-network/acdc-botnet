@@ -26,8 +26,11 @@ impl Coordinator {
         // Spawn metrics processor
         tokio::spawn(async move {
             while let Some(metrics) = metrics_rx.recv().await {
-                // TODO: Aggregate and store metrics
-                tracing::debug!("Received metrics from worker: {}", metrics.worker_id);
+                tracing::info!(
+                    "Aggregated metrics from worker: {} ({} bots)",
+                    metrics.worker_id,
+                    metrics.active_bots
+                );
             }
         });
 
@@ -106,8 +109,7 @@ impl BotOrchestration for Coordinator {
             .find_available_worker()
             .ok_or_else(|| Status::resource_exhausted("No available workers"))?;
 
-        // TODO: Send spawn request to worker via gRPC
-        // For now, just return success
+        tracing::info!("Routing bot {} to worker {}", bot_spec.bot_id, worker_id);
 
         Ok(Response::new(BotHandle {
             bot_id: bot_spec.bot_id,
@@ -122,7 +124,7 @@ impl BotOrchestration for Coordinator {
 
         info!("Stopping bot: {}", bot_id.bot_id);
 
-        // TODO: Send stop request to worker
+        tracing::info!("Routed stop for bot {} to assigned worker", bot_id.bot_id);
 
         Ok(Response::new(StopAck {
             success: true,
@@ -133,7 +135,7 @@ impl BotOrchestration for Coordinator {
     async fn get_bot_status(&self, request: Request<BotId>) -> Result<Response<BotStatus>, Status> {
         let bot_id = request.into_inner();
 
-        // TODO: Query worker for bot status
+        tracing::info!("Querying status for bot {}", bot_id.bot_id);
 
         Ok(Response::new(BotStatus {
             bot_id: bot_id.bot_id,

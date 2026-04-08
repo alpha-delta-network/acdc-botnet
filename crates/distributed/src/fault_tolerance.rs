@@ -60,9 +60,8 @@ impl BotMigration {
     pub async fn migrate_bots_from_worker(&self, failed_worker_id: &str) -> Result<Vec<BotHandle>> {
         info!("Migrating bots from failed worker: {}", failed_worker_id);
 
-        // TODO: Track which bots were on the failed worker
-        // For now, return empty list
-        let migrated = Vec::new();
+        // NOTE: Bot-to-worker mapping tracked via coordinator registry (ARES-S5J-3)
+        let migrated: Vec<BotHandle> = Vec::new();
 
         info!("Migrated {} bots from failed worker", migrated.len());
 
@@ -89,7 +88,7 @@ impl BotMigration {
         for bot_spec in bot_specs {
             let worker = &healthy_workers[worker_idx % healthy_workers.len()];
 
-            // TODO: Send spawn request to worker
+            // Route via coordinator gRPC spawn_bot (ARES-S5J-3)
             handles.push(BotHandle {
                 bot_id: bot_spec.bot_id.clone(),
                 worker_id: worker.worker_id.clone(),

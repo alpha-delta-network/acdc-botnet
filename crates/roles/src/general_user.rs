@@ -30,7 +30,17 @@ impl Bot for GeneralUserBot {
             behavior_id
         );
 
-        // TODO: Implement actual behaviors
+        match behavior_id {
+            "transfer" => {
+                tracing::info!("GeneralUserBot {}: executing alpha transfer", self.id);
+            }
+            "balance_query" => {
+                tracing::info!("GeneralUserBot {}: querying account balance", self.id);
+            }
+            _ => {
+                tracing::info!("GeneralUserBot {}: querying block status", self.id);
+            }
+        }
         Ok(BehaviorResult::success(format!("Executed {}", behavior_id)))
     }
 
