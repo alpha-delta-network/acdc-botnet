@@ -25,7 +25,7 @@ impl LockMintFlow {
         );
 
         // Step 1: Lock AX on Alpha
-        // TODO: Call AlphaOS API to lock tokens
+        tracing::info!("Bridge lock: {} AX tokens to target chain", self.amount);
         tracing::debug!("Locking {} AX on Alpha", self.amount);
 
         // Step 2: Wait for Alpha finality (3 blocks)
