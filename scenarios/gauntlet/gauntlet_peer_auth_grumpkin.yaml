@@ -1,0 +1,63 @@
+# Gauntlet: Peer Auth Grumpkin Migration Gate (ARES S1-B1)
+# Validates that BFT gateway validator auth functions no longer contain
+# Edwards/Grumpkin TODO migration panics and operate correctly.
+
+id: gauntlet_peer_auth_grumpkin
+name: "Peer Auth Grumpkin Migration Gate"
+version: "1.0.0"
+phase: security
+duration_minutes: 10
+fail_action: ABORT
+
+description: >
+  Verify that alphaos/deltaos BFT gateway peer authentication functions
+  (resolve_to_alpha_addr, is_authorized_validator_address) operate without
+  panic after Edwards->Grumpkin TODO comment removal (ARES S1-B1).
+  Connection auth passes for all committee validators.
+
+bots:
+  - role: ValidatorBot
+    count: 5
+    start_offset_seconds: 0
+  - role: ObserverBot
+    count: 2
+    start_offset_seconds: 5
+
+steps:
+  - id: S1
+    action: start_validators
+    description: "Start 5 validators and await BFT ready"
+    timeout_seconds: 60
+    assert:
+      - all_validators_connected: true
+      - no_gateway_panics: true
+
+  - id: S2
+    action: send_challenge_request
+    description: "Send ChallengeRequest from each validator to each other"
+    timeout_seconds: 30
+    assert:
+      - challenge_response_ok: true
+      - no_auth_panic: true
+
+  - id: S3
+    action: verify_peer_auth_acceptance
+    description: "Verify all committee validators accepted by gateway auth"
+    timeout_seconds: 30
+    assert:
+      - all_validators_authorized: true
+      - edwards_fallback_no_panic: true
+
+  - id: S4
+    action: verify_no_panic_logs
+    description: "Scan gateway logs for panic markers"
+    timeout_seconds: 10
+    assert:
+      - log_pattern_absent: "TODO(network-migration)"
+      - log_pattern_absent: "panicked at"
+
+tags:
+  - security
+  - peer-auth
+  - grumpkin-migration
+  - ares-s1-b1

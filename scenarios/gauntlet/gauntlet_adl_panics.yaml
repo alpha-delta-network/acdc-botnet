@@ -1,0 +1,67 @@
+# Gauntlet: ADL Runtime Panic Elimination (ARES S1-C1)
+# Validates that adl parser and interpreter no longer emit reachable panics
+# for invalid input or ProgramID operand handling.
+
+id: gauntlet_adl_panics
+name: "ADL Runtime Panic Elimination"
+version: "1.0.0"
+phase: functional
+duration_minutes: 5
+fail_action: ABORT
+
+description: >
+  Verify that ADL compiler and interpreter do not panic on malformed input
+  or ProgramID operand handling after ARES S1-C1 patches:
+  - conversions.rs: todo!() replaced with Err(InterpreterHalt)
+  - cursor_delta.rs: unimplemented!() replaced with Value::make_string
+
+bots:
+  - role: CompilerBot
+    count: 1
+    start_offset_seconds: 0
+    config:
+      mode: fuzz_parse
+
+steps:
+  - id: S1
+    action: submit_malformed_statement
+    description: "Submit non-Statement SyntaxNode to to_statement()"
+    timeout_seconds: 10
+    assert:
+      - no_panic: true
+      - returns_error: true
+      - error_message_contains: "Expected Statement node"
+
+  - id: S2
+    action: execute_program_id_operand
+    description: "Execute ADL program with ProgramID operand in delta interpreter"
+    timeout_seconds: 10
+    assert:
+      - no_panic: true
+      - value_type: string
+      - value_is_program_name: true
+
+  - id: S3
+    action: fuzz_parser_input
+    description: "Submit 100 malformed inputs to parser"
+    timeout_seconds: 30
+    fuzz_count: 100
+    assert:
+      - no_panics: true
+      - all_return_result: true
+      - panic_count: 0
+
+  - id: S4
+    action: verify_no_panic_logs
+    description: "Scan logs for panic markers"
+    timeout_seconds: 5
+    assert:
+      - log_pattern_absent: "panicked at"
+      - log_pattern_absent: "not yet implemented"
+      - log_pattern_absent: "not implemented"
+
+tags:
+  - functional
+  - panic-elimination
+  - adl-compiler
+  - ares-s1-c1
