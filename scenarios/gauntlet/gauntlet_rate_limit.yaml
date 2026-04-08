@@ -1,0 +1,70 @@
+# Gauntlet: Per-Peer TransmissionRequest Rate Limit (ARES S1-B3)
+# Validates that BFT gateway drops TransmissionRequest events exceeding
+# 100 events/sec from a single peer.
+
+id: gauntlet_rate_limit
+name: "Per-Peer TransmissionRequest Rate Limit"
+version: "1.0.0"
+phase: security
+duration_minutes: 5
+fail_action: ABORT
+
+description: >
+  Verify that alphaos and deltaos BFT gateways enforce 100 TransmissionRequests
+  per second per peer rate limit (ARES S1-B3). Flooding peer should be dropped
+  after 100 events/sec. Legitimate peers at <100 events/sec must not be affected.
+
+bots:
+  - role: ValidatorBot
+    count: 3
+    start_offset_seconds: 0
+  - role: FloodBot
+    count: 1
+    start_offset_seconds: 5
+    config:
+      target_event: TransmissionRequest
+      rate_per_second: 200
+      duration_seconds: 5
+
+steps:
+  - id: S1
+    action: start_validators
+    description: "Start 3 validators and 1 flood bot"
+    timeout_seconds: 30
+    assert:
+      - all_validators_connected: true
+
+  - id: S2
+    action: start_flood
+    description: "FloodBot sends 200 TransmissionRequests/sec for 5 seconds"
+    timeout_seconds: 10
+    assert:
+      - flood_bot_connected: true
+
+  - id: S3
+    action: wait
+    duration_seconds: 6
+    description: "Wait for flooding period to complete"
+
+  - id: S4
+    action: collect_gateway_metrics
+    description: "Collect rate limit counter metrics from gateway"
+    timeout_seconds: 10
+    assert:
+      - rate_limit_drops_gte: 500
+      - log_pattern_present: "Rate limit exceeded for peer"
+      - log_pattern_present: "dropping TransmissionRequest"
+
+  - id: S5
+    action: verify_legitimate_peers_unaffected
+    description: "Verify non-flooding validators still process transmissions"
+    timeout_seconds: 10
+    assert:
+      - legitimate_peers_ok: true
+      - no_false_positive_drops: true
+
+tags:
+  - security
+  - rate-limiting
+  - dos-protection
+  - ares-s1-b3
