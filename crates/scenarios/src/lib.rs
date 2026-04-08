@@ -1,6 +1,7 @@
 pub mod assertions;
 pub mod byzantine_tests;
 pub mod loader;
+pub mod mock_validator;
 /// Scenario framework
 ///
 /// Provides YAML-based scenario definitions and execution
