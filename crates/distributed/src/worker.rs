@@ -3,9 +3,20 @@
 /// Connects to coordinator, spawns bots locally, reports metrics
 use crate::proto::{bot_orchestration_client::BotOrchestrationClient, *};
 use anyhow::Result;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::{mpsc, RwLock};
 use tokio::time::interval;
 use tracing::{info, warn};
+
+/// Handle to a running bot task
+struct BotTaskHandle {
+    bot_id: String,
+    behavior: String,
+    cancel_tx: mpsc::Sender<()>,
+}
 
 /// Worker daemon
 pub struct Worker {
@@ -53,14 +64,47 @@ impl Worker {
         // Register with coordinator
         self.register(&mut client).await?;
 
+        // Shared state
+        let active_bots = Arc::new(AtomicUsize::new(0));
+        let shutdown_flag = Arc::new(AtomicBool::new(false));
+        // Map from bot_id -> cancel sender
+        let bot_handles: Arc<RwLock<HashMap<String, mpsc::Sender<()>>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+
         // Start heartbeat loop
         let mut heartbeat_interval = interval(Duration::from_secs(5));
 
         loop {
+            if shutdown_flag.load(Ordering::Relaxed) {
+                info!(
+                    "Worker {} shutting down — waiting for {} active bots",
+                    self.worker_id,
+                    active_bots.load(Ordering::Relaxed)
+                );
+                // Wait for running bots to complete (poll with backoff)
+                let mut waited = 0u32;
+                while active_bots.load(Ordering::Relaxed) > 0 && waited < 30 {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    waited += 1;
+                }
+                info!("Worker {} shutdown complete", self.worker_id);
+                return Ok(());
+            }
+
             heartbeat_interval.tick().await;
 
-            match self.send_heartbeat(&mut client).await {
-                Ok(_) => {}
+            let current_active = active_bots.load(Ordering::Relaxed) as u32;
+
+            match self.send_heartbeat(&mut client, current_active).await {
+                Ok(directive) => {
+                    self.handle_directive(
+                        directive,
+                        Arc::clone(&active_bots),
+                        Arc::clone(&shutdown_flag),
+                        Arc::clone(&bot_handles),
+                    )
+                    .await;
+                }
                 Err(e) => {
                     warn!("Heartbeat failed: {}", e);
                     // Try to reconnect
@@ -101,54 +145,108 @@ impl Worker {
         Ok(())
     }
 
-    /// Send heartbeat to coordinator
+    /// Send heartbeat to coordinator, returns the directive received
     async fn send_heartbeat(
         &self,
         client: &mut BotOrchestrationClient<tonic::transport::Channel>,
-    ) -> Result<()> {
+        active_bots: u32,
+    ) -> Result<CoordinatorDirective> {
         let request = tonic::Request::new(WorkerHealth {
             worker_id: self.worker_id.clone(),
             healthy: true,
-            active_bots: 0, // NOTE: Active bot count reported via metrics stream (ARES-S5J-2)
+            active_bots,
             timestamp_ms: current_time_ms(),
         });
 
         let response = client.heartbeat(request).await?;
-        let directive = response.into_inner();
+        Ok(response.into_inner())
+    }
 
-        // Handle directive
+    /// Handle a directive from the coordinator
+    async fn handle_directive(
+        &self,
+        directive: CoordinatorDirective,
+        active_bots: Arc<AtomicUsize>,
+        shutdown_flag: Arc<AtomicBool>,
+        bot_handles: Arc<RwLock<HashMap<String, mpsc::Sender<()>>>>,
+    ) {
         match coordinator_directive::Action::try_from(directive.action) {
             Ok(coordinator_directive::Action::Continue) => {}
             Ok(coordinator_directive::Action::Shutdown) => {
-                info!("Received shutdown directive from coordinator");
-                tracing::info!("Initiating graceful shutdown: stopping active bots before exit");
+                info!(
+                    "Worker {} received Shutdown directive — draining bots",
+                    self.worker_id
+                );
+                // Signal all running bots to stop
+                let handles = bot_handles.read().await;
+                for (bot_id, cancel_tx) in handles.iter() {
+                    if let Err(e) = cancel_tx.try_send(()) {
+                        warn!("Could not cancel bot {}: {}", bot_id, e);
+                    }
+                }
+                // Set shutdown flag — run() loop will drain and exit
+                shutdown_flag.store(true, Ordering::Relaxed);
             }
             Ok(coordinator_directive::Action::SpawnBots) => {
                 info!(
-                    "Received spawn directive for {} bots",
+                    "Worker {} received SpawnBots directive: {} specs",
+                    self.worker_id,
                     directive.spawn_specs.len()
                 );
-                tracing::info!(
-                    "Spawn directive queued: {} bot specs scheduled for local execution",
-                    directive.spawn_specs.len()
-                );
+                for spec in directive.spawn_specs {
+                    let bot_id = spec.bot_id.clone();
+                    let behavior = spec.behavior.clone();
+                    let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
+
+                    let active_bots_clone = Arc::clone(&active_bots);
+                    let bot_handles_clone = Arc::clone(&bot_handles);
+                    let worker_id = self.worker_id.clone();
+
+                    bot_handles.write().await.insert(bot_id.clone(), cancel_tx);
+                    active_bots.fetch_add(1, Ordering::Relaxed);
+
+                    tokio::spawn(async move {
+                        info!(
+                            "Worker {} spawned bot {} behavior={}",
+                            worker_id, bot_id, behavior
+                        );
+                        // Run bot until cancelled or a simulated completion
+                        tokio::select! {
+                            _ = cancel_rx.recv() => {
+                                info!("Bot {} cancelled by worker {}", bot_id, worker_id);
+                            }
+                            _ = tokio::time::sleep(Duration::from_secs(300)) => {
+                                info!("Bot {} completed (timeout) on worker {}", bot_id, worker_id);
+                            }
+                        }
+                        active_bots_clone.fetch_sub(1, Ordering::Relaxed);
+                        bot_handles_clone.write().await.remove(&bot_id);
+                    });
+                }
             }
             Ok(coordinator_directive::Action::StopBots) => {
                 info!(
-                    "Received stop directive for {} bots",
+                    "Worker {} received StopBots directive: {} bot ids",
+                    self.worker_id,
                     directive.stop_bot_ids.len()
                 );
-                tracing::info!(
-                    "Stop directive received: {} bots scheduled for termination",
-                    directive.stop_bot_ids.len()
-                );
+                let handles = bot_handles.read().await;
+                for bot_id in &directive.stop_bot_ids {
+                    if let Some(cancel_tx) = handles.get(bot_id) {
+                        if let Err(e) = cancel_tx.try_send(()) {
+                            warn!("Could not stop bot {}: {}", bot_id, e);
+                        } else {
+                            info!("Sent stop signal to bot {}", bot_id);
+                        }
+                    } else {
+                        warn!("StopBots: bot {} not found on this worker", bot_id);
+                    }
+                }
             }
             Err(_) => {
                 warn!("Unknown directive action: {}", directive.action);
             }
         }
-
-        Ok(())
     }
 }
 
