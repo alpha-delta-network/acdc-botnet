@@ -2,8 +2,10 @@
 use crate::proto::*;
 use crate::registry::WorkerRegistry;
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::RwLock;
 use tokio::time::interval;
 use tracing::{info, warn};
 
@@ -46,25 +48,116 @@ impl FaultDetector {
     }
 }
 
+/// Tracks which bots are assigned to which workers for fault recovery
+pub struct BotAssignmentTracker {
+    /// Maps worker_id -> list of (bot_id, bot_spec)
+    assignments: Arc<RwLock<HashMap<String, Vec<BotSpec>>>>,
+}
+
+impl BotAssignmentTracker {
+    pub fn new() -> Self {
+        Self {
+            assignments: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Record that a bot has been assigned to a worker
+    pub async fn record_assignment(&self, worker_id: &str, bot_spec: BotSpec) {
+        let mut assignments = self.assignments.write().await;
+        assignments
+            .entry(worker_id.to_string())
+            .or_default()
+            .push(bot_spec);
+        tracing::debug!("Tracked bot {} on worker {}", {
+            let specs = assignments.get(worker_id).unwrap();
+            specs.last().map(|s| s.bot_id.clone()).unwrap_or_default()
+        }, worker_id);
+    }
+
+    /// Remove a bot assignment (called when a bot completes or stops)
+    pub async fn remove_assignment(&self, worker_id: &str, bot_id: &str) {
+        let mut assignments = self.assignments.write().await;
+        if let Some(bots) = assignments.get_mut(worker_id) {
+            bots.retain(|s| s.bot_id != bot_id);
+        }
+    }
+
+    /// Get all bot specs assigned to a worker (for recovery)
+    pub async fn get_worker_bots(&self, worker_id: &str) -> Vec<BotSpec> {
+        let assignments = self.assignments.read().await;
+        assignments.get(worker_id).cloned().unwrap_or_default()
+    }
+
+    /// Remove all assignments for a worker (called after migration)
+    pub async fn clear_worker(&self, worker_id: &str) {
+        let mut assignments = self.assignments.write().await;
+        assignments.remove(worker_id);
+    }
+
+    /// Get total tracked bot count
+    pub async fn total_bots(&self) -> usize {
+        let assignments = self.assignments.read().await;
+        assignments.values().map(|v| v.len()).sum()
+    }
+}
+
+impl Default for BotAssignmentTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Bot migration handles moving bots from failed workers
 pub struct BotMigration {
     registry: Arc<WorkerRegistry>,
+    tracker: Arc<BotAssignmentTracker>,
 }
 
 impl BotMigration {
     pub fn new(registry: Arc<WorkerRegistry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            tracker: Arc::new(BotAssignmentTracker::new()),
+        }
+    }
+
+    pub fn with_tracker(registry: Arc<WorkerRegistry>, tracker: Arc<BotAssignmentTracker>) -> Self {
+        Self { registry, tracker }
+    }
+
+    /// Get access to the assignment tracker (for recording new assignments)
+    pub fn tracker(&self) -> Arc<BotAssignmentTracker> {
+        Arc::clone(&self.tracker)
     }
 
     /// Migrate bots from failed worker to healthy workers
     pub async fn migrate_bots_from_worker(&self, failed_worker_id: &str) -> Result<Vec<BotHandle>> {
         info!("Migrating bots from failed worker: {}", failed_worker_id);
 
-        // TODO: Track which bots were on the failed worker
-        // For now, return empty list
-        let migrated = Vec::new();
+        // Retrieve which bots were on the failed worker
+        let bot_specs = self.tracker.get_worker_bots(failed_worker_id).await;
+        if bot_specs.is_empty() {
+            info!("No bots tracked on failed worker {}", failed_worker_id);
+            return Ok(vec![]);
+        }
 
-        info!("Migrated {} bots from failed worker", migrated.len());
+        info!(
+            "Found {} bots to migrate from worker {}",
+            bot_specs.len(),
+            failed_worker_id
+        );
+
+        // Clear tracking for failed worker
+        self.tracker.clear_worker(failed_worker_id).await;
+
+        // Redistribute to healthy workers
+        let migrated = self.redistribute_bots(bot_specs).await?;
+
+        info!(
+            "Migrated {} bots from failed worker {}",
+            migrated.len(),
+            failed_worker_id
+        );
 
         Ok(migrated)
     }
@@ -89,7 +182,11 @@ impl BotMigration {
         for bot_spec in bot_specs {
             let worker = &healthy_workers[worker_idx % healthy_workers.len()];
 
-            // TODO: Send spawn request to worker
+            // Track the new assignment
+            self.tracker
+                .record_assignment(&worker.worker_id, bot_spec.clone())
+                .await;
+
             handles.push(BotHandle {
                 bot_id: bot_spec.bot_id.clone(),
                 worker_id: worker.worker_id.clone(),
@@ -232,5 +329,30 @@ mod tests {
         let flushed = buffer.flush();
         assert_eq!(flushed.len(), 5);
         assert_eq!(buffer.size(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_bot_assignment_tracker() {
+        let tracker = BotAssignmentTracker::new();
+
+        let spec = BotSpec {
+            bot_id: "bot-1".to_string(),
+            role: "user".to_string(),
+            role_variant: String::new(),
+            behavior: "submit_tx".to_string(),
+            config: vec![],
+            target_network: String::new(),
+            tags: vec![],
+        };
+
+        tracker.record_assignment("worker-1", spec.clone()).await;
+        assert_eq!(tracker.total_bots().await, 1);
+
+        let bots = tracker.get_worker_bots("worker-1").await;
+        assert_eq!(bots.len(), 1);
+        assert_eq!(bots[0].bot_id, "bot-1");
+
+        tracker.remove_assignment("worker-1", "bot-1").await;
+        assert_eq!(tracker.total_bots().await, 0);
     }
 }

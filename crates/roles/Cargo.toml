@@ -27,6 +27,7 @@ tracing = { workspace = true }
 
 # Utilities
 rand = { workspace = true }
+reqwest = { workspace = true }
 
 # Cryptography (for GovernorBot ed25519 signing)
 ed25519-dalek = { workspace = true }

@@ -7,15 +7,29 @@ use crate::proto::{
 };
 use crate::registry::WorkerRegistry;
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::{info, warn};
+
+/// Aggregated metrics across all workers
+#[derive(Debug, Default, Clone)]
+struct AggregatedMetrics {
+    total_active_bots: u32,
+    per_worker: HashMap<String, WorkerMetrics>,
+}
 
 /// Coordinator for distributed bot orchestration
 pub struct Coordinator {
     registry: Arc<WorkerRegistry>,
     metrics_tx: mpsc::Sender<WorkerMetrics>,
+    /// Aggregated metrics storage
+    aggregated_metrics: Arc<RwLock<AggregatedMetrics>>,
+    /// Pending directives for each worker: worker_id -> queue of directives
+    pending_directives: Arc<RwLock<HashMap<String, Vec<CoordinatorDirective>>>>,
+    /// Bot-to-worker mapping: bot_id -> worker_id
+    bot_assignments: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl Coordinator {
@@ -23,17 +37,31 @@ impl Coordinator {
     pub fn new() -> Self {
         let (metrics_tx, mut metrics_rx) = mpsc::channel::<WorkerMetrics>(1000);
 
-        // Spawn metrics processor
+        let aggregated_metrics = Arc::new(RwLock::new(AggregatedMetrics::default()));
+        let agg_clone = Arc::clone(&aggregated_metrics);
+
+        // Spawn metrics processor — aggregates and stores metrics from all workers
         tokio::spawn(async move {
             while let Some(metrics) = metrics_rx.recv().await {
-                // TODO: Aggregate and store metrics
-                tracing::debug!("Received metrics from worker: {}", metrics.worker_id);
+                let worker_id = metrics.worker_id.clone();
+                let active_bots = metrics.active_bots;
+                tracing::debug!("Received metrics from worker {}: {} active bots", worker_id, active_bots);
+
+                let mut agg = agg_clone.write().await;
+                // Update per-worker entry
+                let old_bots = agg.per_worker.get(&worker_id).map(|m| m.active_bots).unwrap_or(0);
+                agg.per_worker.insert(worker_id, metrics);
+                // Adjust total
+                agg.total_active_bots = agg.total_active_bots.saturating_sub(old_bots) + active_bots;
             }
         });
 
         Self {
             registry: Arc::new(WorkerRegistry::new()),
             metrics_tx,
+            aggregated_metrics,
+            pending_directives: Arc::new(RwLock::new(HashMap::new())),
+            bot_assignments: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -61,6 +89,31 @@ impl Coordinator {
     /// Get total bot capacity
     pub fn total_capacity(&self) -> u32 {
         self.registry.total_capacity()
+    }
+
+    /// Queue a directive for a specific worker (delivered on next heartbeat)
+    async fn queue_directive(&self, worker_id: &str, directive: CoordinatorDirective) {
+        let mut directives = self.pending_directives.write().await;
+        directives
+            .entry(worker_id.to_string())
+            .or_default()
+            .push(directive);
+    }
+
+    /// Pop the next pending directive for a worker (called during heartbeat)
+    async fn pop_directive(&self, worker_id: &str) -> CoordinatorDirective {
+        let mut directives = self.pending_directives.write().await;
+        if let Some(queue) = directives.get_mut(worker_id) {
+            if !queue.is_empty() {
+                return queue.remove(0);
+            }
+        }
+        // Default: continue
+        CoordinatorDirective {
+            action: coordinator_directive::Action::Continue as i32,
+            spawn_specs: vec![],
+            stop_bot_ids: vec![],
+        }
     }
 }
 
@@ -106,14 +159,30 @@ impl BotOrchestration for Coordinator {
             .find_available_worker()
             .ok_or_else(|| Status::resource_exhausted("No available workers"))?;
 
-        // TODO: Send spawn request to worker via gRPC
-        // For now, just return success
+        // Record bot->worker assignment
+        self.bot_assignments
+            .write()
+            .await
+            .insert(bot_spec.bot_id.clone(), worker_id.clone());
+
+        // Queue a SpawnBots directive for the chosen worker (delivered on next heartbeat)
+        self.queue_directive(
+            &worker_id,
+            CoordinatorDirective {
+                action: coordinator_directive::Action::SpawnBots as i32,
+                spawn_specs: vec![bot_spec.clone()],
+                stop_bot_ids: vec![],
+            },
+        )
+        .await;
+
+        info!("Queued spawn directive for bot {} on worker {}", bot_spec.bot_id, worker_id);
 
         Ok(Response::new(BotHandle {
             bot_id: bot_spec.bot_id,
             worker_id,
             success: true,
-            message: "Bot spawned successfully".to_string(),
+            message: "Bot spawn queued".to_string(),
         }))
     }
 
@@ -122,23 +191,47 @@ impl BotOrchestration for Coordinator {
 
         info!("Stopping bot: {}", bot_id.bot_id);
 
-        // TODO: Send stop request to worker
+        // Look up which worker hosts this bot
+        let assignments = self.bot_assignments.read().await;
+        if let Some(worker_id) = assignments.get(&bot_id.bot_id) {
+            let worker_id = worker_id.clone();
+            drop(assignments);
+
+            // Queue a StopBots directive for the worker
+            self.queue_directive(
+                &worker_id,
+                CoordinatorDirective {
+                    action: coordinator_directive::Action::StopBots as i32,
+                    spawn_specs: vec![],
+                    stop_bot_ids: vec![bot_id.bot_id.clone()],
+                },
+            )
+            .await;
+
+            info!("Queued stop directive for bot {} on worker {}", bot_id.bot_id, worker_id);
+        } else {
+            warn!("stop_bot: bot {} not found in assignments", bot_id.bot_id);
+        }
 
         Ok(Response::new(StopAck {
             success: true,
-            message: "Bot stopped successfully".to_string(),
+            message: "Bot stop queued".to_string(),
         }))
     }
 
     async fn get_bot_status(&self, request: Request<BotId>) -> Result<Response<BotStatus>, Status> {
         let bot_id = request.into_inner();
 
-        // TODO: Query worker for bot status
+        let assignments = self.bot_assignments.read().await;
+        let worker_id = assignments
+            .get(&bot_id.bot_id)
+            .cloned()
+            .unwrap_or_default();
 
         Ok(Response::new(BotStatus {
             bot_id: bot_id.bot_id,
-            status: "running".to_string(),
-            message: String::new(),
+            status: if worker_id.is_empty() { "unknown".to_string() } else { "running".to_string() },
+            message: if worker_id.is_empty() { "Bot not found".to_string() } else { format!("On worker {}", worker_id) },
             uptime_ms: 0,
             operations_count: 0,
         }))
@@ -172,12 +265,20 @@ impl BotOrchestration for Coordinator {
             .update_heartbeat(&health.worker_id, health.healthy)
             .map_err(|e| Status::internal(format!("Heartbeat failed: {}", e)))?;
 
-        // Return directive (usually CONTINUE)
-        Ok(Response::new(CoordinatorDirective {
-            action: coordinator_directive::Action::Continue as i32,
-            spawn_specs: vec![],
-            stop_bot_ids: vec![],
-        }))
+        // Forward metrics to aggregator
+        let metrics = WorkerMetrics {
+            worker_id: health.worker_id.clone(),
+            active_bots: health.active_bots,
+            bot_metrics: vec![],
+            cpu_usage_percent: 0,
+            memory_usage_bytes: 0,
+            timestamp_ms: health.timestamp_ms,
+        };
+        let _ = self.metrics_tx.try_send(metrics);
+
+        // Return the next queued directive (or CONTINUE if none pending)
+        let directive = self.pop_directive(&health.worker_id).await;
+        Ok(Response::new(directive))
     }
 
     async fn distribute_scenario(
@@ -202,6 +303,12 @@ impl BotOrchestration for Coordinator {
         for bot_spec in scenario.bot_specs {
             let worker = &workers[worker_idx % workers.len()];
 
+            // Track bot->worker assignment
+            self.bot_assignments
+                .write()
+                .await
+                .insert(bot_spec.bot_id.clone(), worker.worker_id.clone());
+
             // Find or create assignment for this worker
             if let Some(assignment) = assignments
                 .iter_mut()
@@ -216,6 +323,19 @@ impl BotOrchestration for Coordinator {
             }
 
             worker_idx += 1;
+        }
+
+        // Queue SpawnBots directives for each worker
+        for assignment in &assignments {
+            self.queue_directive(
+                &assignment.worker_id,
+                CoordinatorDirective {
+                    action: coordinator_directive::Action::SpawnBots as i32,
+                    spawn_specs: assignment.bot_specs.clone(),
+                    stop_bot_ids: vec![],
+                },
+            )
+            .await;
         }
 
         let worker_count = assignments.len();
@@ -236,5 +356,33 @@ mod tests {
     async fn test_coordinator_creation() {
         let coordinator = Coordinator::new();
         assert_eq!(coordinator.worker_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_pending_directives() {
+        let coordinator = Coordinator::new();
+
+        // No pending directives → Continue
+        let d = coordinator.pop_directive("worker-1").await;
+        assert_eq!(d.action, coordinator_directive::Action::Continue as i32);
+
+        // Queue a directive
+        coordinator
+            .queue_directive(
+                "worker-1",
+                CoordinatorDirective {
+                    action: coordinator_directive::Action::Shutdown as i32,
+                    spawn_specs: vec![],
+                    stop_bot_ids: vec![],
+                },
+            )
+            .await;
+
+        let d = coordinator.pop_directive("worker-1").await;
+        assert_eq!(d.action, coordinator_directive::Action::Shutdown as i32);
+
+        // Back to Continue
+        let d = coordinator.pop_directive("worker-1").await;
+        assert_eq!(d.action, coordinator_directive::Action::Continue as i32);
     }
 }
