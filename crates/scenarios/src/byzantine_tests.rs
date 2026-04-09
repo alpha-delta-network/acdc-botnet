@@ -17,9 +17,8 @@ mod tests {
         mode: ByzantineMode,
     ) -> Vec<MockValidator> {
         let honest_count = n - f_byzantine;
-        let mut validators: Vec<MockValidator> = (0..honest_count)
-            .map(MockValidator::honest)
-            .collect();
+        let mut validators: Vec<MockValidator> =
+            (0..honest_count).map(MockValidator::honest).collect();
         for i in honest_count..n {
             validators.push(MockValidator::byzantine(i, mode.clone()));
         }
@@ -77,7 +76,11 @@ mod tests {
         }
 
         // Equivocator must be detected
-        assert_eq!(equivocations.len(), f, "Expected {f} equivocation(s) detected");
+        assert_eq!(
+            equivocations.len(),
+            f,
+            "Expected {f} equivocation(s) detected"
+        );
         assert_eq!(equivocations[0].validator_id, n - f);
     }
 
@@ -180,7 +183,10 @@ mod tests {
         let (result, equivocations) = round.collect_votes(&validators);
 
         // No equivocations — silent dropper just abstains
-        assert!(equivocations.is_empty(), "Silent dropper produces no equivocation evidence");
+        assert!(
+            equivocations.is_empty(),
+            "Silent dropper produces no equivocation evidence"
+        );
 
         match result {
             VoteResult::Quorum(signers) => {

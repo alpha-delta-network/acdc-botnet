@@ -45,14 +45,23 @@ impl Coordinator {
             while let Some(metrics) = metrics_rx.recv().await {
                 let worker_id = metrics.worker_id.clone();
                 let active_bots = metrics.active_bots;
-                tracing::debug!("Received metrics from worker {}: {} active bots", worker_id, active_bots);
+                tracing::debug!(
+                    "Received metrics from worker {}: {} active bots",
+                    worker_id,
+                    active_bots
+                );
 
                 let mut agg = agg_clone.write().await;
                 // Update per-worker entry
-                let old_bots = agg.per_worker.get(&worker_id).map(|m| m.active_bots).unwrap_or(0);
+                let old_bots = agg
+                    .per_worker
+                    .get(&worker_id)
+                    .map(|m| m.active_bots)
+                    .unwrap_or(0);
                 agg.per_worker.insert(worker_id, metrics);
                 // Adjust total
-                agg.total_active_bots = agg.total_active_bots.saturating_sub(old_bots) + active_bots;
+                agg.total_active_bots =
+                    agg.total_active_bots.saturating_sub(old_bots) + active_bots;
             }
         });
 
@@ -176,7 +185,10 @@ impl BotOrchestration for Coordinator {
         )
         .await;
 
-        info!("Queued spawn directive for bot {} on worker {}", bot_spec.bot_id, worker_id);
+        info!(
+            "Queued spawn directive for bot {} on worker {}",
+            bot_spec.bot_id, worker_id
+        );
 
         Ok(Response::new(BotHandle {
             bot_id: bot_spec.bot_id,
@@ -208,7 +220,10 @@ impl BotOrchestration for Coordinator {
             )
             .await;
 
-            info!("Queued stop directive for bot {} on worker {}", bot_id.bot_id, worker_id);
+            info!(
+                "Queued stop directive for bot {} on worker {}",
+                bot_id.bot_id, worker_id
+            );
         } else {
             warn!("stop_bot: bot {} not found in assignments", bot_id.bot_id);
         }
@@ -223,15 +238,20 @@ impl BotOrchestration for Coordinator {
         let bot_id = request.into_inner();
 
         let assignments = self.bot_assignments.read().await;
-        let worker_id = assignments
-            .get(&bot_id.bot_id)
-            .cloned()
-            .unwrap_or_default();
+        let worker_id = assignments.get(&bot_id.bot_id).cloned().unwrap_or_default();
 
         Ok(Response::new(BotStatus {
             bot_id: bot_id.bot_id,
-            status: if worker_id.is_empty() { "unknown".to_string() } else { "running".to_string() },
-            message: if worker_id.is_empty() { "Bot not found".to_string() } else { format!("On worker {}", worker_id) },
+            status: if worker_id.is_empty() {
+                "unknown".to_string()
+            } else {
+                "running".to_string()
+            },
+            message: if worker_id.is_empty() {
+                "Bot not found".to_string()
+            } else {
+                format!("On worker {}", worker_id)
+            },
             uptime_ms: 0,
             operations_count: 0,
         }))

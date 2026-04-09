@@ -76,7 +76,11 @@ impl Worker {
 
         loop {
             if shutdown_flag.load(Ordering::Relaxed) {
-                info!("Worker {} shutting down — waiting for {} active bots", self.worker_id, active_bots.load(Ordering::Relaxed));
+                info!(
+                    "Worker {} shutting down — waiting for {} active bots",
+                    self.worker_id,
+                    active_bots.load(Ordering::Relaxed)
+                );
                 // Wait for running bots to complete (poll with backoff)
                 let mut waited = 0u32;
                 while active_bots.load(Ordering::Relaxed) > 0 && waited < 30 {

@@ -68,10 +68,14 @@ impl BotAssignmentTracker {
             .entry(worker_id.to_string())
             .or_default()
             .push(bot_spec);
-        tracing::debug!("Tracked bot {} on worker {}", {
-            let specs = assignments.get(worker_id).unwrap();
-            specs.last().map(|s| s.bot_id.clone()).unwrap_or_default()
-        }, worker_id);
+        tracing::debug!(
+            "Tracked bot {} on worker {}",
+            {
+                let specs = assignments.get(worker_id).unwrap();
+                specs.last().map(|s| s.bot_id.clone()).unwrap_or_default()
+            },
+            worker_id
+        );
     }
 
     /// Remove a bot assignment (called when a bot completes or stops)

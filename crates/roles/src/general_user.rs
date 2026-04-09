@@ -57,12 +57,13 @@ impl GeneralUserBot {
         if status.is_success() {
             let tx_hash = body.get("tx_hash").cloned().unwrap_or(json!("unknown"));
             tracing::info!("GeneralUserBot {} submit_tx OK: {}", self.id, tx_hash);
-            Ok(BehaviorResult::success(format!("submit_tx accepted: {}", tx_hash))
-                .with_data(body))
+            Ok(BehaviorResult::success(format!("submit_tx accepted: {}", tx_hash)).with_data(body))
         } else {
             tracing::warn!(
                 "GeneralUserBot {} submit_tx HTTP {}: {:?}",
-                self.id, status, body
+                self.id,
+                status,
+                body
             );
             Ok(BehaviorResult::error(format!(
                 "submit_tx HTTP {}: {}",
@@ -104,7 +105,9 @@ impl GeneralUserBot {
         } else {
             tracing::warn!(
                 "GeneralUserBot {} query_balance HTTP {}: {:?}",
-                self.id, status, body
+                self.id,
+                status,
+                body
             );
             Ok(BehaviorResult::error(format!("query_balance HTTP {}", status)).with_data(body))
         }
@@ -137,7 +140,8 @@ impl GeneralUserBot {
         } else {
             tracing::warn!(
                 "GeneralUserBot {} check_status: node unhealthy HTTP {}",
-                self.id, status
+                self.id,
+                status
             );
             Ok(BehaviorResult::error(format!("node unhealthy: HTTP {}", status)).with_data(body))
         }

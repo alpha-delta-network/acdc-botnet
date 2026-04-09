@@ -214,7 +214,8 @@ impl BftRound {
 
         // Detect equivocators: same validator, same round, different block_hash values
         let mut equivocations: Vec<EquivocationEvidence> = Vec::new();
-        let mut equivocator_ids: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut equivocator_ids: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
 
         for (vid, votes) in &by_validator {
             if votes.len() > 1 {
