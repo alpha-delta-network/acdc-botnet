@@ -1,0 +1,83 @@
+# Gauntlet: SK-B BFT ChallengeRequest GrumpkinAddress Gate (ARES SK-B)
+# Validates that BFT validator ChallengeRequest exchanges carry GrumpkinAddress<N>
+# (not the deprecated edwards Address<N> zero value) after SK-B migration.
+
+id: gauntlet_skey2_challenge
+name: "BFT ChallengeRequest GrumpkinAddress Gate"
+version: "1.0.0"
+phase: security
+duration_minutes: 15
+fail_action: ABORT
+
+description: >
+  Verify that alphaos BFT ChallengeRequest messages contain valid GrumpkinAddress<N>
+  values (account.address()) rather than Address::zero() from the deprecated
+  edwards_address() stub. All 5 validators must exchange challenge requests that
+  contain non-zero Grumpkin addresses. The bootstrap_client handshake must also
+  pass with GrumpkinAddress identity. Regression gate for SK-B-TAIL (router +
+  bootstrap_client + bft/events cascade).
+
+bots:
+  - role: ValidatorBot
+    count: 5
+    start_offset_seconds: 0
+  - role: ObserverBot
+    count: 2
+    start_offset_seconds: 10
+
+steps:
+  - id: S1
+    action: start_validators
+    description: "Start 5 validators and await BFT committee formation"
+    timeout_seconds: 90
+    assert:
+      - all_validators_connected: true
+      - bft_committee_formed: true
+
+  - id: S2
+    action: capture_challenge_requests
+    description: "Capture ChallengeRequest messages on all inter-validator connections"
+    timeout_seconds: 60
+    assert:
+      - challenge_requests_captured: true
+      - capture_count_min: 20
+
+  - id: S3
+    action: verify_challenge_address_nonzero
+    description: "Verify all ChallengeRequest.address fields are non-zero GrumpkinAddress"
+    timeout_seconds: 30
+    assert:
+      - no_zero_grumpkin_address: true
+      - all_addresses_grumpkin_type: true
+
+  - id: S4
+    action: verify_bootstrap_handshake
+    description: "Verify bootstrap_client handshake uses GrumpkinAddress identity"
+    timeout_seconds: 30
+    assert:
+      - bootstrap_handshake_ok: true
+      - bootstrap_address_nonzero: true
+
+  - id: S5
+    action: verify_validator_response_addresses
+    description: "Verify ValidatorsResponse.validators map contains GrumpkinAddress values"
+    timeout_seconds: 30
+    assert:
+      - validators_response_grumpkin: true
+      - no_edwards_address_in_response: true
+
+  - id: S6
+    action: verify_no_edwards_stubs
+    description: "Scan BFT logs for deprecated edwards_address() call markers"
+    timeout_seconds: 10
+    assert:
+      - log_pattern_absent: "edwards_address"
+      - log_pattern_absent: "Address::zero"
+
+tags:
+  - security
+  - bft
+  - grumpkin
+  - challenge-request
+  - ares-sk-b
+  - skey2

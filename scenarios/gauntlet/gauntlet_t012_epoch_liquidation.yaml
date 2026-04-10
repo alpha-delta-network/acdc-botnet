@@ -1,0 +1,96 @@
+# Gauntlet: T012 Dead Wallet Epoch Liquidation Gate (ARES SK-C)
+# Validates that deltavm epoch boundary processing correctly flags and liquidates
+# dormant seed commitments via scan_and_flag() before process_epoch().
+
+id: gauntlet_t012_epoch_liquidation
+name: "T012 Dead Wallet Epoch Liquidation Gate"
+version: "1.0.0"
+phase: feature
+duration_minutes: 20
+fail_action: ABORT
+
+description: >
+  Verify that deltavm/vm/runtime/epoch.rs process_epoch_boundary() calls
+  scan_and_flag(&mut seed_records, current_epoch, is_gid_exempt) BEFORE
+  process_epoch(), so that dormant seeds are flagged and the liquidation_batch
+  is non-empty when dormancy thresholds are met. Without scan_and_flag(),
+  process_epoch() sees no dormant seeds and liquidation_batch is always empty —
+  the dead wallet treasury never receives liquidated funds. SK-C gate.
+
+bots:
+  - role: ValidatorBot
+    count: 5
+    start_offset_seconds: 0
+  - role: WalletBot
+    count: 10
+    start_offset_seconds: 15
+    config:
+      seed_wallets: 5
+      dormancy_trigger: true
+
+steps:
+  - id: S1
+    action: start_validators
+    description: "Start 5 validators and await Delta epoch boundary processing"
+    timeout_seconds: 90
+    assert:
+      - all_validators_connected: true
+      - delta_height_advancing: true
+
+  - id: S2
+    action: seed_dormant_wallets
+    description: "Create 5 seed-commitment wallets and make them dormant (no activity)"
+    timeout_seconds: 60
+    params:
+      wallet_count: 5
+      epochs_dormant: 3
+    assert:
+      - seed_wallets_registered: true
+      - wallets_dormant: true
+
+  - id: S3
+    action: advance_to_epoch_boundary
+    description: "Advance chain to trigger epoch boundary processing"
+    timeout_seconds: 120
+    assert:
+      - epoch_boundary_reached: true
+
+  - id: S4
+    action: verify_scan_and_flag_executed
+    description: "Verify scan_and_flag() was called before process_epoch() in epoch boundary logs"
+    timeout_seconds: 30
+    assert:
+      - scan_and_flag_called: true
+      - scan_before_process: true
+
+  - id: S5
+    action: verify_liquidation_batch_nonempty
+    description: "Verify liquidation_batch contains dormant seeds after scan_and_flag"
+    timeout_seconds: 30
+    assert:
+      - liquidation_batch_count_min: 1
+      - dormant_seeds_flagged: true
+
+  - id: S6
+    action: verify_treasury_credited
+    description: "Verify dead wallet treasury received liquidated DX funds"
+    timeout_seconds: 30
+    assert:
+      - treasury_balance_increased: true
+      - liquidated_amount_positive: true
+
+  - id: S7
+    action: verify_no_future_stubs
+    description: "Scan epoch.rs logs for residual FUTURE(T012) markers"
+    timeout_seconds: 10
+    assert:
+      - log_pattern_absent: "FUTURE(T012"
+      - log_pattern_absent: "T012-AX-IPC"
+
+tags:
+  - feature
+  - economics
+  - dead-wallet
+  - epoch-boundary
+  - t012
+  - ares-sk-c

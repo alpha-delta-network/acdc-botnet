@@ -1,0 +1,92 @@
+# Gauntlet: Name Renew + Transfer Schnorr Ownership Gate (ARES SK-A / A009)
+# Validates that alphavm naming ops (renew, transfer) enforce Schnorr ownership
+# proofs correctly after A009 v2.2.0 migration.
+
+id: gauntlet_name_renew_schnorr
+name: "Name Renew/Transfer Schnorr Ownership Gate"
+version: "1.0.0"
+phase: feature
+duration_minutes: 10
+fail_action: ABORT
+
+description: >
+  Verify that alphavm/vm/naming/ops.rs renew() and transfer() operations
+  enforce 96-byte Schnorr ownership proofs (owner_proof: [u8; 96]) and
+  validate owner_vk: [u8; 33] NameRecord fields after A009 v2.2.0 migration.
+  Valid proofs must pass; invalid/missing proofs must be rejected with
+  NameError::InvalidOwnerProof.
+
+bots:
+  - role: WalletBot
+    count: 3
+    start_offset_seconds: 0
+  - role: ObserverBot
+    count: 1
+    start_offset_seconds: 5
+
+steps:
+  - id: S1
+    action: register_name
+    description: "Register a name with Schnorr owner keypair"
+    timeout_seconds: 30
+    assert:
+      - registration_accepted: true
+      - owner_vk_stored: true
+
+  - id: S2
+    action: renew_name_valid_proof
+    description: "Renew name with valid 96-byte Schnorr proof — must succeed"
+    timeout_seconds: 30
+    params:
+      proof_bytes: 96
+      proof_type: schnorr_valid
+    assert:
+      - renew_accepted: true
+      - no_invalid_proof_error: true
+
+  - id: S3
+    action: renew_name_invalid_proof
+    description: "Attempt renew with invalid Schnorr proof — must be rejected"
+    timeout_seconds: 30
+    params:
+      proof_bytes: 96
+      proof_type: schnorr_invalid
+    assert:
+      - renew_rejected: true
+      - error_is: "NameError::InvalidOwnerProof"
+
+  - id: S4
+    action: renew_name_wrong_size_proof
+    description: "Attempt renew with 64-byte (pre-v2.2.0) proof — must be rejected"
+    timeout_seconds: 30
+    params:
+      proof_bytes: 64
+      proof_type: schnorr_truncated
+    assert:
+      - renew_rejected: true
+      - error_is: "NameError::InvalidOwnerProof"
+
+  - id: S5
+    action: transfer_name_valid_proof
+    description: "Transfer name to new owner with valid Schnorr proof — must succeed"
+    timeout_seconds: 30
+    params:
+      proof_type: schnorr_valid
+    assert:
+      - transfer_accepted: true
+      - new_owner_vk_updated: true
+
+  - id: S6
+    action: verify_no_zk_future_stubs
+    description: "Scan naming ops logs for residual FUTURE(A009-P3-ZK) markers"
+    timeout_seconds: 10
+    assert:
+      - log_pattern_absent: "FUTURE(A009"
+      - log_pattern_absent: "unimplemented"
+
+tags:
+  - feature
+  - naming
+  - schnorr
+  - a009
+  - ares-sk-a
