@@ -1,0 +1,208 @@
+scenario:
+  metadata:
+    id: "SEC-015"
+    name: "Cryptographic Implementation Audit"
+    type: security
+    severity: critical
+    duration: "25 minutes"
+    description: |
+      Adversarial coverage of the Grumpkin key system and Schnorr implementation.
+      Tests from the ARES HIGH findings not covered by existing Gauntlet:
+
+        ARES HIGH: "Schnorr nonce derivation — HKDF output reuse across sign() calls
+                    not tested; deterministic nonce generation unverified"
+        ARES HIGH: "BIP-32 hardened child derivation — path m/44'/7001'/{account}'/...
+                    no test that hardened derivation prevents parent key recovery"
+        ARES HIGH: "Grumpkin field arithmetic — no test for order overflow behavior"
+        ARES HIGH: "Poseidon hash domain separator — same hash for different domain contexts?"
+
+      Also tests:
+        - Schnorr signature with r=0 (degenerate case — some implementations skip this check)
+        - Zero private key (sk=0 → pk=G*0=identity)
+        - Key derivation oracle (timing sidechannel on derive())
+        - Signature malleability (is (r,s) and (r,-s) both accepted?)
+
+  setup:
+    bots:
+      - id: "crypto-auditor-{1-5}"
+        role: "general_user"
+        variant: "power"
+        count: 5
+        wallet_ax: 1000000
+
+  phases:
+
+    - name: "Schnorr signature edge cases"
+      duration: "5 min"
+      bots: "crypto-auditor-1"
+      behavior: "crypto.schnorr_edge_cases"
+      params:
+        tests:
+          - name: "r=0 signature"
+            description: "Schnorr sig with r component = 0 (degenerate — some impls accept)"
+            sig_r: "0000000000000000000000000000000000000000000000000000000000000000"
+            sig_s: "valid_s_for_message"
+            expected_rejection: true
+          - name: "s=0 signature"
+            sig_r: "valid_r"
+            sig_s: "0000000000000000000000000000000000000000000000000000000000000000"
+            expected_rejection: true
+          - name: "signature malleability — negated s"
+            description: "(r, s) valid → (r, -s mod order) must be REJECTED"
+            start_with_valid_sig: true
+            negate_s: true            # s' = curve_order - s
+            expected_rejection: true  # non-malleable: only canonical s accepted
+          - name: "signature malleability — negated r"
+            negate_r: true            # r' = curve_order - r (if r < order)
+            expected_rejection: true
+          - name: "all-ones signature"
+            sig_bytes: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\
+                        ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+            expected_rejection: true
+          - name: "oversize signature (extra bytes)"
+            append_bytes: "deadbeef"
+            expected_rejection: true  # strict parsing — no trailing bytes accepted
+      assertions:
+        - all_degenerate_sigs_rejected: true
+        - malleable_sig_rejected: true
+
+    - name: "Zero and weak private keys"
+      duration: "3 min"
+      bots: "crypto-auditor-2"
+      behavior: "crypto.weak_key_probe"
+      params:
+        tests:
+          - name: "zero private key"
+            description: "sk=0 → pk=identity point (G*0=∞) — invalid key"
+            sk_hex: "0000000000000000000000000000000000000000000000000000000000000000"
+            expected: "key_rejected_or_pubkey_is_identity"
+          - name: "one private key"
+            sk_hex: "0000000000000000000000000000000000000000000000000000000000000001"
+            expected: "accepted_trivially_weak_key_allowed"
+            note: "May be technically valid but trivially breakable"
+          - name: "order-minus-one private key"
+            description: "sk = curve_order - 1 (largest valid scalar)"
+            sk_hex: "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000000"
+            expected: "accepted"  # valid scalar
+          - name: "private key >= curve order"
+            description: "sk >= curve_order — must reduce or reject"
+            sk_hex: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+            expected: "reduced_or_rejected"
+      assertions:
+        - zero_key_handled_safely: true
+        - out_of_range_key_handled: true
+
+    - name: "Schnorr nonce determinism and non-reuse"
+      duration: "5 min"
+      bots: "crypto-auditor-{1-2}"
+      behavior: "crypto.nonce_reuse_probe"
+      params:
+        description: |
+          Sign 1000 distinct messages with the same key.
+          Extract all (r, s) pairs. Check:
+            1. No two r values are identical (nonce reuse → key recovery)
+            2. r values are uniformly distributed (not biased PRNG)
+            3. Signing is deterministic: sign(msg, sk) = sign(msg, sk) always
+        key_count: 2
+        messages_per_key: 500
+        checks:
+          - no_r_collision: true         # CRITICAL: nonce reuse = key recovery
+          - r_uniformly_distributed: true
+          - deterministic_given_same_inputs: true
+          - different_messages_different_r: true
+      assertions:
+        - no_nonce_reuse_detected: true  # CRITICAL
+        - nonces_appear_random: true
+
+    - name: "BIP-32 hardened derivation"
+      duration: "4 min"
+      bots: "crypto-auditor-3"
+      behavior: "crypto.bip32_audit"
+      params:
+        tests:
+          - name: "hardened child parent recovery"
+            description: |
+              Given hardened child key m/44'/7001'/0'/0/0 and chain code,
+              attempt to derive parent key. Should be computationally infeasible.
+            path: "m/44'/7001'/0'/0/0"
+            attempt_parent_recovery: true
+            expected: "infeasible"       # hardened path prevents this
+          - name: "non-hardened child parent recovery"
+            description: |
+              Given non-hardened child key AND chain code:
+              xpub = G*sk_child, cc_child → can recover xpriv_parent?
+              Non-hardened derivation allows this — is it used where it shouldn't be?
+            path: "m/44/7001/0/0/0"     # non-hardened (no apostrophe)
+            check_if_non_hardened_used_for_sensitive_keys: true
+          - name: "path collision"
+            description: "m/44'/7001'/0'/0/0 vs m/44'/7001'/0/0/0 (hardened vs not)"
+            path_a: "m/44'/7001'/0'/0/0"
+            path_b: "m/44'/7001'/0/0/0"
+            keys_must_differ: true
+      assertions:
+        - hardened_prevents_parent_recovery: true
+        - sensitive_paths_use_hardened: true
+
+    - name: "Poseidon hash domain separation"
+      duration: "3 min"
+      bots: "crypto-auditor-4"
+      behavior: "crypto.poseidon_domain_sep"
+      params:
+        tests:
+          - name: "GraphKey domain collision"
+            description: |
+              sk_tag = Poseidon(vk, DOMAIN_SEP_GRAPH_KEY)
+              Is DOMAIN_SEP_GRAPH_KEY distinct from DOMAIN_SEP_SCHNORR_CHALLENGE?
+              Collision → graph key = Schnorr challenge (cross-protocol confusion)
+            compute_graph_key: true
+            compute_schnorr_challenge_same_input: true
+            must_differ: true
+          - name: "cross-circuit collision"
+            description: "Poseidon hash in shielded_transfer vs bridge.alpha — same output for same input?"
+            circuit_a: "shielded_transfer"
+            circuit_b: "bridge.alpha"
+            same_input: [1, 2, 3, 4]
+            must_differ: true   # domain separators must be different
+          - name: "empty input"
+            input: []
+            expected: "well_defined_output"  # not a crash
+      assertions:
+        - domain_separators_distinct: true
+        - no_cross_context_hash_collision: true
+
+    - name: "Field arithmetic boundary"
+      duration: "3 min"
+      bots: "crypto-auditor-5"
+      behavior: "crypto.field_arithmetic_boundary"
+      params:
+        tests:
+          - name: "Grumpkin Fr overflow"
+            description: "Submit value > Grumpkin field order — must reduce or reject"
+            value: "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001"  # order+1
+            context: "proof_public_input"
+            expected: "reduced_mod_order_or_rejected"
+          - name: "BN254 Fr overflow in circuit"
+            value_bn254: "30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd48"  # BN254 order+1
+            expected: "reduced_mod_order"
+          - name: "Zero field element"
+            value: "0"
+            context: "commitment_scalar"
+            expected: "well_defined_but_weak"
+      assertions:
+        - field_overflow_handled: true
+        - no_panic_on_boundary_values: true
+
+  success_criteria:
+    - zero_sig_rejected: true
+    - malleable_sig_rejected: true
+    - no_nonce_reuse: true            # CRITICAL
+    - hardened_bip32_secure: true
+    - poseidon_domain_sep_correct: true
+    - field_overflow_handled: true
+    expected_findings:
+      - id: CRYPTO-001
+        description: "Verify Schnorr nonce is deterministic (HKDF) and tested under concurrent signing"
+        severity: high
+      - id: CRYPTO-002
+        description: "Verify signature malleability protection (canonical-s enforcement)"
+        severity: medium

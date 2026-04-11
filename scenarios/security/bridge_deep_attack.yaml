@@ -1,0 +1,171 @@
+scenario:
+  metadata:
+    id: "SEC-011"
+    name: "Bridge Deep Security Attack"
+    type: security
+    severity: critical
+    duration: "20 minutes"
+    description: |
+      Adversarial coverage of the bridge lock/unlock lifecycle beyond T3.8.
+      The bridge seen_lock_attestations HashSet (in-memory, per-node) has no
+      eviction policy — flooding it can exhaust memory. Additionally tests:
+        - unlock without corresponding lock (forge an unlock)
+        - amount substitution between lock and unlock
+        - concurrent unlock race (claim same lock twice)
+        - bridge/state information leakage
+        - cross-node lock state inconsistency (lock on node A, unlock on node B)
+
+  setup:
+    bots:
+      - id: "bridge-attacker-{1-50}"
+        role: "general_user"
+        variant: "power"
+        count: 50
+        wallet_ax: 10000000
+        wallet_dx: 10000000
+      - id: "honest-user-{1-10}"
+        role: "general_user"
+        variant: "casual"
+        count: 10
+        wallet_ax: 5000000
+
+  phases:
+
+    - name: "Baseline bridge operation"
+      duration: "2 min"
+      bots: "honest-user-*"
+      behavior: "cross_chain.lock_mint"
+      params:
+        amount: 100000
+        rate_per_bot: 0.5
+      assertions:
+        - baseline_lock_mint_success_rate: ">95%"
+
+    - name: "seen_lock_attestations memory flood"
+      duration: "5 min"
+      bots: "bridge-attacker-{1-20}"
+      behavior: "bridge.lock_flood"
+      params:
+        # Each unique lock_id is stored permanently in the HashSet
+        # With no eviction, this is an unbounded memory growth vector
+        lock_ids_per_bot: 10000
+        amount_microcredits: 1
+        alpha_user: "aleo1flood{bot_id}"
+        # Rate: 20 bots * 10000 = 200,000 entries
+        target_entry_count: 200000
+      metrics:
+        - entries_inserted: count
+        - node_memory_mb_before: gauge
+        - node_memory_mb_after: gauge
+        - memory_growth_mb: gauge
+      assertions:
+        - memory_growth_bounded: true          # must not grow > 100MB
+        - node_still_healthy_after_flood: true
+        - eviction_or_cap_enforced: true       # EXPECTED BUG: currently none
+
+    - name: "Unlock without corresponding lock"
+      duration: "3 min"
+      bots: "bridge-attacker-21"
+      behavior: "bridge.unlock_without_lock"
+      params:
+        # Attempt to trigger unlock/mint on Delta without a valid Alpha lock
+        # This tests whether bridge verifies lock exists before minting
+        fabricated_lock_ids:
+          - "nonexistent-lock-aaa111"
+          - "nonexistent-lock-bbb222"
+          - "nonexistent-lock-ccc333"
+        amounts: [1000000, 5000000, 50000000]
+        targets:
+          alpha_rest: "http://localhost:3030"
+          delta_rest: "http://localhost:3031"
+        expected_rejection: true
+      assertions:
+        - all_fabricated_unlocks_rejected: true
+        - delta_balance_unchanged: true
+        - no_unauthorized_mints: true
+
+    - name: "Amount substitution attack"
+      duration: "3 min"
+      bots: "bridge-attacker-{22-25}"
+      behavior: "bridge.amount_substitution"
+      params:
+        # Lock 100 AX → attempt to unlock 100,000 AX
+        # The bridge should verify amount matches the original lock attestation
+        lock_amount: 100000        # lock this much on Alpha
+        unlock_amount: 100000000   # try to claim 1000x more on Delta
+        steps:
+          - step: lock
+            endpoint: "/api/v1/bridge/lock"
+            payload_amount_field: "amount_microcredits"
+          - step: unlock
+            endpoint: "/api/v1/bridge/unlock"
+            substituted_amount: 100000000
+            expected_rejection: true
+      assertions:
+        - amount_mismatch_rejected: true
+        - only_locked_amount_mintable: true
+
+    - name: "Concurrent unlock race"
+      duration: "3 min"
+      bots: "bridge-attacker-{26-35}"
+      behavior: "bridge.concurrent_unlock"
+      params:
+        # One legitimate lock → multiple simultaneous unlock attempts
+        # Only one should succeed; duplicates must be rejected (409/conflict)
+        lock_id: "race-unlock-{bot_id}"
+        amount_microcredits: 1000000
+        concurrent_unlocks: 10      # 10 bots try to unlock the same lock_id
+        race_window_ms: 100
+      assertions:
+        - at_most_one_unlock_per_lock: true
+        - duplicate_unlocks_rejected: true
+        - no_double_mints: true
+
+    - name: "Cross-node lock inconsistency"
+      duration: "2 min"
+      bots: "bridge-attacker-{36-40}"
+      behavior: "bridge.cross_node_inconsistency"
+      params:
+        # seen_lock_attestations is per-node, not replicated via consensus
+        # Lock on node testnet001; attempt duplicate on testnet002
+        # If not replicated, testnet002 will accept a "duplicate"
+        lock_id: "cross-node-{bot_id}"
+        amount_microcredits: 500000
+        node_a: "testnet001.ac-dc.network"
+        node_b: "testnet002.ac-dc.network"
+        steps:
+          - lock_on: node_a         # first lock on node001 → 200
+          - lock_on: node_b         # same lock_id on node002 → should 409 if replicated
+            expected: 409
+      assertions:
+        - lock_state_replicated_across_nodes: true   # EXPECTED BUG: currently per-node only
+        - no_double_acceptance_across_nodes: true
+
+    - name: "Bridge state information probe"
+      duration: "1 min"
+      bots: "auditor-1"
+      behavior: "api.endpoint_probe"
+      params:
+        endpoints:
+          - path: "/api/v1/bridge/state"
+            method: GET
+            check_for:
+              - exposes_all_lock_ids: false     # should not leak full state
+              - exposes_seen_lock_count: false  # internal metric not for public
+              - auth_required: true
+      assertions:
+        - bridge_state_not_publicly_leaked: true
+
+  success_criteria:
+    - memory_flood_bounded: true
+    - unlock_without_lock_rejected: true
+    - amount_substitution_rejected: true
+    - concurrent_unlock_deduplicated: true
+    # Expected failures (bugs to track):
+    expected_findings:
+      - id: BRIDGE-001
+        description: "No eviction policy on seen_lock_attestations HashSet — memory DoS"
+        severity: medium
+      - id: BRIDGE-002
+        description: "Lock attestation state is per-node, not consensus-replicated"
+        severity: medium

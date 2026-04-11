@@ -1,0 +1,168 @@
+scenario:
+  metadata:
+    id: "SEC-012"
+    name: "Prover Work Theft and DoS"
+    type: security
+    severity: high
+    duration: "20 minutes"
+    description: |
+      Adversarial coverage of the prover work-lease system:
+        /api/v1/prover/work/lease    — claim work units (auth required)
+        /api/v1/prover/proof/submit  — submit proof for a lease
+        /api/v1/prover/challenge     — get challenge for registration
+        /api/v1/prover/register      — register a prover node
+        /api/v1/prover/status        — query prover status
+
+      Attack vectors:
+        1. Work lease exhaustion — claim all available leases, starve legitimate prover
+        2. Submit proof for expired lease — test lease TTL enforcement
+        3. Submit proof for another prover's work_id — cross-prover injection
+        4. Submit all-zero / truncated proof bytes — crash the verifier?
+        5. Registration with invalid keypair / duplicate prover_id
+        6. Challenge replay — reuse an old challenge to re-register
+
+  setup:
+    bots:
+      - id: "prover-attacker-{1-10}"
+        role: "prover_node"
+        variant: "adversarial"
+        count: 10
+        # attacker provers need registered API keys
+        api_keys:
+          - "ak_prover-attacker-testnet-00000001"
+          - "ak_prover-attacker-testnet-00000002"
+          - "ak_prover-attacker-testnet-00000003"
+          - "ak_prover-attacker-testnet-00000004"
+          - "ak_prover-attacker-testnet-00000005"
+      - id: "legitimate-prover"
+        role: "prover_node"
+        variant: "honest"
+        count: 1
+        api_key: "ak_prover-node-testnet-bootstrap-00000000"
+
+  phases:
+
+    - name: "Baseline — legitimate prover gets work"
+      duration: "2 min"
+      bots: "legitimate-prover"
+      behavior: "prover.claim_and_submit"
+      params:
+        circuit: "shielded_transfer"
+        expect_work_available: true
+      assertions:
+        - legitimate_prover_gets_lease: true
+        - proof_accepted: true
+
+    - name: "Work lease exhaustion"
+      duration: "5 min"
+      bots: "prover-attacker-{1-5}"
+      behavior: "prover.lease_exhaustion"
+      params:
+        # Claim as many leases as possible without submitting proofs
+        # Leases time out but during TTL the legitimate prover gets starved
+        max_leases_per_bot: 100
+        hold_without_submitting: true
+        lease_ttl_seconds: 60
+      metrics:
+        - leases_acquired_total: count
+        - legitimate_prover_starvation_sec: gauge
+        - max_concurrent_leases_per_prover: gauge
+      assertions:
+        - per_prover_lease_cap_enforced: true   # EXPECTED: limit leases per API key
+        - legitimate_prover_not_starved: true
+
+    - name: "Expired lease proof submission"
+      duration: "3 min"
+      bots: "prover-attacker-1"
+      behavior: "prover.submit_expired_lease"
+      params:
+        claim_lease: true
+        wait_for_expiry: true            # wait for TTL to expire
+        then_submit_valid_proof: true    # submit proof after expiry
+        expected_rejection: true
+        rejection_code: [400, 401, 409, 422]
+      assertions:
+        - expired_lease_rejected: true
+        - no_proof_accepted_after_ttl: true
+
+    - name: "Cross-prover work_id injection"
+      duration: "3 min"
+      bots: "prover-attacker-{2-3}"
+      behavior: "prover.cross_prover_injection"
+      params:
+        # Attacker-2 claims a lease → gets work_id W1
+        # Attacker-3 submits a proof claiming work_id W1 (theft attempt)
+        steps:
+          - bot: "prover-attacker-2"
+            action: claim_lease
+            capture: work_id
+          - bot: "prover-attacker-3"
+            action: submit_proof
+            work_id: "{captured_work_id}"  # use attacker-2's work_id
+            expected_rejection: true        # must reject cross-prover submission
+      assertions:
+        - work_id_bound_to_prover: true
+        - cross_prover_submission_rejected: true
+
+    - name: "Malformed proof bytes"
+      duration: "3 min"
+      bots: "prover-attacker-{4-6}"
+      behavior: "prover.malformed_proof"
+      params:
+        first_claim_lease: true
+        proof_variants:
+          - name: all_zeros
+            proof_bytes: "0000000000000000000000000000000000000000000000000000000000000000"
+            expected_rejection: true
+          - name: empty
+            proof_bytes: ""
+            expected_rejection: true
+          - name: truncated
+            proof_bytes: "deadbeef"   # valid hex but too short
+            expected_rejection: true
+          - name: not_hex
+            proof_bytes: "ZZZZZZZZ"
+            expected_rejection: true
+          - name: oversized
+            proof_bytes_mb: 10       # 10MB proof
+            expected_rejection: true
+          - name: valid_proof_wrong_circuit
+            # proof for circuit A submitted as circuit B
+            original_circuit: "shielded_transfer"
+            claim_circuit: "bridge.alpha"
+            expected_rejection: true
+        must_not_crash_verifier: true
+        must_not_return_500: true
+      assertions:
+        - all_malformed_proofs_rejected: true
+        - verifier_still_functional_after: true
+
+    - name: "Challenge replay attack"
+      duration: "2 min"
+      bots: "prover-attacker-7"
+      behavior: "prover.challenge_replay"
+      params:
+        steps:
+          - action: get_challenge
+            capture: challenge_token
+          - action: register_with_challenge
+            challenge: "{captured_challenge}"
+            expect_success: true
+          - action: register_again_with_same_challenge
+            challenge: "{captured_challenge}"  # replay the same challenge
+            expected_rejection: true           # must reject used challenge
+      assertions:
+        - challenge_single_use: true
+        - replay_rejected: true
+
+  success_criteria:
+    - lease_cap_per_prover: true
+    - expired_lease_proof_rejected: true
+    - cross_prover_injection_blocked: true
+    - malformed_proofs_rejected: true
+    - verifier_crash_free: true
+    - challenge_replay_blocked: true
+    expected_findings:
+      - id: PROVER-001
+        description: "No per-prover lease cap — lease exhaustion can starve legitimate prover"
+        severity: medium

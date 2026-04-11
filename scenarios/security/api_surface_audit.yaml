@@ -1,0 +1,265 @@
+scenario:
+  metadata:
+    id: "SEC-010"
+    name: "API Surface Security Audit"
+    type: security
+    severity: critical
+    duration: "15 minutes"
+    description: |
+      Systematic adversarial coverage of all 50+ adnet API routes.
+      Targets: missing rate limits, CORS wildcard misconfiguration, auth
+      order-of-operations (schema probe before auth check), oversized
+      payloads, content-type bypass, HTTP method confusion, and
+      information disclosure via unauthenticated endpoints.
+
+      Live recon findings (2026-04-11):
+        - /api/v1/bridge/lock: NO rate limit — 20 rapid POSTs all return 200
+        - /api/v1/keys/current: 200 without auth (node x25519 pubkey exposed)
+        - CORS: access-control-allow-origin: * on ALL endpoints
+        - /api/v1/prover/proof/submit: deserialization error before auth check
+        - /api/v1/solutions/broadcast: same pre-auth schema probe possible
+        - /openapi.yaml: full API spec exposed unauthenticated (8851 bytes)
+        - /graphql: live, partial introspection
+
+  setup:
+    bots:
+      - id: "auditor-{1-5}"
+        role: "general_user"
+        variant: "power"
+        count: 5
+        wallet_ax: 100000
+
+  phases:
+
+    - name: "Rate limit — bridge lock flood"
+      duration: "2 min"
+      bots: "auditor-1"
+      behavior: "api.rate_limit_probe"
+      params:
+        endpoint: "/api/v1/bridge/lock"
+        method: POST
+        body_template:
+          lock_id: "rl-probe-{seq}"
+          alpha_user: "aleo1ratelimit"
+          amount_microcredits: 1
+          alpha_block: 0
+        burst_count: 100
+        burst_window_ms: 1000
+        expected_429_after: 20    # should throttle within 20 reqs/sec
+      assertions:
+        - rate_limit_triggered: true
+        - max_accepted_per_second: 20
+
+    - name: "Rate limit — transaction submit flood"
+      duration: "2 min"
+      bots: "auditor-2"
+      behavior: "api.rate_limit_probe"
+      params:
+        endpoint: "/api/v1/transactions/submit/public"
+        method: POST
+        body_template:
+          chain_id: 13
+          transaction: "AAAA"
+        burst_count: 200
+        burst_window_ms: 2000
+        expected_429_after: 50
+      assertions:
+        - rate_limit_triggered: true
+
+    - name: "CORS wildcard — credentialed cross-origin request"
+      duration: "1 min"
+      bots: "auditor-1"
+      behavior: "api.cors_audit"
+      params:
+        # CORS * with credentials is rejected by browsers — but check server enforcement
+        endpoints:
+          - "/api/v1/keys/current"
+          - "/api/v1/bridge/lock"
+          - "/api/v1/committee"
+        origin: "https://evil.attacker.example.com"
+        with_credentials: true
+        checks:
+          - vary_header_present: true          # must Vary: Origin
+          - no_allow_credentials_true: true    # MUST NOT set ACAO-C: true with ACAO-O: *
+          - sensitive_data_not_in_cors_response: true
+      assertions:
+        - cors_credentials_not_allowed_with_wildcard: true
+
+    - name: "Auth order — schema probe before credentials"
+      duration: "2 min"
+      bots: "auditor-3"
+      behavior: "api.auth_order_probe"
+      params:
+        # These endpoints return deserialization errors (HTTP 422) before 401
+        # Meaning schema is parsed before auth check — attacker can enumerate schema
+        endpoints:
+          - path: "/api/v1/prover/proof/submit"
+            method: POST
+            probe_body: '{"completely_wrong": true}'
+            expected_without_valid_schema: 401   # should auth-check FIRST
+            actual: 422                           # BUG: schema check before auth
+          - path: "/api/v1/solutions/broadcast"
+            method: POST
+            probe_body: '{"wrong": true}'
+            expected_without_valid_schema: 401
+            actual: 422
+          - path: "/api/v1/validator/rotate-key"
+            method: POST
+            probe_body: '{"wrong": true}'
+            expected_without_valid_schema: 401
+            actual: 415   # content-type check before auth — also schema probe
+        expected_behavior: "401 Unauthorized BEFORE any deserialization error"
+      assertions:
+        - auth_checked_before_deserialization: true
+
+    - name: "Information disclosure — unauthenticated sensitive endpoints"
+      duration: "1 min"
+      bots: "auditor-1"
+      behavior: "api.info_disclosure_probe"
+      params:
+        endpoints:
+          - path: "/api/v1/keys/current"
+            expected: 401
+            actual: 200    # BUG: node encryption key exposed
+            severity: medium
+            data_exposed: "node x25519 pubkey (epoch 0)"
+          - path: "/openapi.yaml"
+            expected: 401_or_404
+            actual: 200    # INFO: full API schema in production
+            severity: low
+            data_exposed: "full API route + schema specification"
+          - path: "/api/v1/status"
+            expected: 200   # Public — OK
+            severity: info
+          - path: "/api/v1/version"
+            expected: 200   # Public — OK
+            severity: info
+      assertions:
+        - keys_current_requires_auth: true
+        - openapi_restricted_or_redacted: true
+
+    - name: "Oversized payload handling"
+      duration: "2 min"
+      bots: "auditor-2"
+      behavior: "api.oversized_payload"
+      params:
+        tests:
+          - endpoint: "/api/v1/bridge/lock"
+            payload_mb: 10
+            expected: [413, 422, 400]   # must not be 500 or hang
+          - endpoint: "/api/v1/transactions/submit/public"
+            payload_mb: 50
+            expected: [413, 422, 400]
+          - endpoint: "/api/v1/names/register"
+            name_length: 100000         # 100KB name string
+            expected: [400, 422]
+          - endpoint: "/api/v1/bridge/lock"
+            lock_id_length: 1048576     # 1MB lock_id
+            expected: [400, 413, 422]
+        must_not_crash_node: true
+        must_not_return_500: true
+        max_response_time_ms: 5000
+      assertions:
+        - all_oversized_rejected: true
+        - node_still_healthy_after: true
+
+    - name: "HTTP method confusion"
+      duration: "1 min"
+      bots: "auditor-1"
+      behavior: "api.method_confusion"
+      params:
+        tests:
+          - endpoint: "/api/v1/bridge/lock"
+            method: GET
+            expected: 405
+          - endpoint: "/api/v1/blocks"
+            method: DELETE
+            expected: 405
+          - endpoint: "/api/v1/committee"
+            method: PUT
+            expected: 405
+          # X-HTTP-Method-Override header bypass
+          - endpoint: "/api/v1/bridge/lock"
+            method: GET
+            headers:
+              X-HTTP-Method-Override: POST
+              X-Method-Override: POST
+            expected: 405   # must NOT be processed as POST
+          - endpoint: "/api/v1/status"
+            method: OPTIONS
+            expected: [200, 204]
+            check_no_sensitive_cors_headers: true
+        must_not_honor_method_override: true
+      assertions:
+        - method_override_headers_ignored: true
+
+    - name: "Content-type and encoding attacks"
+      duration: "2 min"
+      bots: "auditor-4"
+      behavior: "api.content_type_attack"
+      params:
+        tests:
+          - endpoint: "/api/v1/bridge/lock"
+            content_type: "text/plain"
+            body: '{"lock_id":"test","alpha_user":"aleo1test","amount_microcredits":1,"alpha_block":0}'
+            expected: 415
+          - endpoint: "/api/v1/bridge/lock"
+            content_type: "application/xml"
+            body: "<lock><lock_id>test</lock_id></lock>"
+            expected: [400, 415]
+          - endpoint: "/api/v1/bridge/lock"
+            content_type: "application/json; charset=utf-16"
+            body_encoding: utf-16
+            expected: [400, 415, 422]
+          # JSON with BOM
+          - endpoint: "/api/v1/bridge/lock"
+            content_type: "application/json"
+            body_prefix: "\xEF\xBB\xBF"   # UTF-8 BOM
+            expected: [400, 422]
+          # Double-encoded JSON
+          - endpoint: "/api/v1/bridge/lock"
+            content_type: "application/json"
+            body: '"{\\"lock_id\\":\\"double-encoded\\"}"'
+            expected: [422]
+      assertions:
+        - content_type_strictly_enforced: true
+
+    - name: "Numeric boundary attacks on bridge"
+      duration: "2 min"
+      bots: "auditor-5"
+      behavior: "api.numeric_boundary"
+      params:
+        endpoint: "/api/v1/bridge/lock"
+        tests:
+          - amount_microcredits: 0
+            expected: [400, 422]        # zero amount should be rejected
+          - amount_microcredits: -1
+            expected: [400, 422]        # negative not valid for u128
+          - amount_microcredits: 340282366920938463463374607431768211455  # u128::MAX
+            expected: [200, 400, 422]   # if accepted, verify no overflow
+          - amount_microcredits: 9999999999999999999999999999999999999999  # > u128::MAX
+            expected: [400, 422]
+          - alpha_block: -1
+            amount_microcredits: 1000
+            expected: [400, 422]
+          - alpha_block: 18446744073709551615  # u64::MAX
+            amount_microcredits: 1000
+            expected: [200, 400, 422]
+          - lock_id: ""
+            expected: [400, 422]        # empty lock_id
+          - lock_id: "   "              # whitespace only
+            expected: [400, 422]
+      assertions:
+        - zero_amount_rejected: true
+        - negative_amount_rejected: true
+        - empty_lock_id_rejected: true
+
+  success_criteria:
+    # These must ALL fail (meaning security controls must be present)
+    - rate_limit_on_bridge_lock: true
+    - cors_no_wildcard_with_credentials: true
+    - auth_before_deserialization: true
+    - keys_current_behind_auth: true
+    - oversized_payloads_rejected: true
+    - method_override_ignored: true
+    - zero_amount_rejected: true

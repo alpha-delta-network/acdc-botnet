@@ -1,0 +1,173 @@
+scenario:
+  metadata:
+    id: "SEC-014"
+    name: "State Integrity and Storage Attack"
+    type: security
+    severity: high
+    duration: "15 minutes"
+    description: |
+      Adversarial coverage of state storage, state root computation, and
+      the /api/v1/state/* endpoints.
+
+      Live recon findings (2026-04-11):
+        - /api/v1/state/path/%2F%2F%2Fetc%2Fpasswd → 200, echoes key back
+          {"key":"///etc/passwd","value":null,"proof":null}
+          (Not a real path traversal — DB just returns null — but key is echoed)
+        - /api/v1/state/path/admin%00evil → 200, null-byte echoed
+          {"key":"admin\u0000evil","value":null,"proof":null}
+        - No auth on state path queries — arbitrary key enumeration
+
+      Attack vectors:
+        1. State bomb — submit large state values to exhaust disk
+        2. State key enumeration — probe internal key structure
+        3. State root manipulation — submit block with wrong state root
+        4. Delta/Alpha state root divergence probe
+        5. Null-byte key truncation (backend-dependent)
+        6. Unicode normalization collision (key "café" vs "cafe\u0301")
+        7. State path auth bypass — unauthenticated read of all state
+
+  setup:
+    bots:
+      - id: "state-attacker-{1-5}"
+        role: "general_user"
+        variant: "power"
+        count: 5
+        wallet_ax: 5000000
+      - id: "monitor-1"
+        role: "general_user"
+        variant: "observer"
+        count: 1
+
+  phases:
+
+    - name: "State key enumeration"
+      duration: "2 min"
+      bots: "state-attacker-1"
+      behavior: "state.key_enumeration"
+      params:
+        # /api/v1/state/path/:key is unauthenticated — anyone can probe internal state
+        probe_keys:
+          # Known internal key patterns
+          - "credits.aleo/mapping/account/{addr}"
+          - "bridge.alpha/mapping/seen_locks/{lock_id}"
+          - "governance.alpha/mapping/proposals/0"
+          - "admin"
+          - "config"
+          - "genesis"
+          - "validator_set"
+          - "epoch/0"
+          # Injection attempts
+          - "../../../config"
+          - "admin\x00"
+          - "__internal__"
+          - "\x00\x00\x00"
+        check_for:
+          - any_key_returns_non_null: record      # interesting if anything non-null
+          - auth_required_for_reads: check        # EXPECTED BUG: currently unauthenticated
+          - key_reflected_in_response: check      # potential XSS vector if JSON key echoed
+      assertions:
+        - state_reads_require_auth: true          # EXPECTED FINDING
+        - no_null_byte_truncation: true
+
+    - name: "State storage bomb"
+      duration: "4 min"
+      bots: "state-attacker-{2-4}"
+      behavior: "state.storage_bomb"
+      params:
+        # Write large state entries via legitimate-looking transactions
+        # Target: credits mapping, name service registry
+        approach:
+          - method: "name_registration_flood"
+            # Register maximum-length names to bloat name service storage
+            name_length: 63          # max allowed
+            registrations: 1000
+            check_storage_limit: true
+          - method: "large_memo_tx"
+            # Include oversized memo field in transactions
+            memo_length: 65536
+            tx_count: 100
+            expected: [400, 422]     # should reject before writing
+          - method: "deep_mapping_nesting"
+            # Attempt to create deeply nested mapping keys
+            depth: 100
+            expected: [400, 422]
+        monitor_disk_usage: true
+        disk_growth_limit_mb: 500
+      assertions:
+        - storage_growth_bounded: true
+        - name_registration_has_limit: true
+
+    - name: "State root integrity"
+      duration: "3 min"
+      bots: "state-attacker-5"
+      behavior: "state.root_probe"
+      params:
+        # Verify state root is consistent across nodes
+        endpoints:
+          - "/api/v1/state/root"       # Alpha state root
+          - "/api/v1/state/root/delta" # Delta state root
+        cross_node_check:
+          nodes: ["testnet001", "testnet002", "testnet003", "testnet004", "testnet005"]
+          roots_must_match: true
+        # Submit tx, then check root changed deterministically
+        submit_test_tx: true
+        verify_root_updated: true
+        verify_root_deterministic: true
+      assertions:
+        - state_roots_consistent_across_nodes: true
+        - state_root_updates_after_tx: true
+        - alpha_delta_roots_independent: true   # Alpha and Delta have separate roots
+
+    - name: "State inclusion proof verification"
+      duration: "3 min"
+      bots: "state-attacker-1"
+      behavior: "state.proof_verification"
+      params:
+        # /api/v1/state/path/:key returns {key, value, proof}
+        # Test that the proof field is actually valid (not null/empty stub)
+        check_keys:
+          - key: "credits.aleo/mapping/account/{funded_addr}"
+            expected_value_non_null: true
+            expected_proof_non_null: true     # EXPECTED FINDING: proof may be stub
+            verify_proof_against_root: true
+        tampered_proof_tests:
+          - submit_tx_with_invalid_state_proof: true
+            expected_rejection: true
+      assertions:
+        - state_proofs_are_valid_merkle: true   # EXPECTED BUG: may be stub null
+        - invalid_state_proof_rejected: true
+
+    - name: "Unicode normalization collision"
+      duration: "2 min"
+      bots: "state-attacker-2"
+      behavior: "state.unicode_collision"
+      params:
+        # Register name "café" (NFC), then try to register "cafe\u0301" (NFD)
+        # They should be treated as equivalent — or one should fail
+        name_a: "caf\u00e9"          # NFC: é as single codepoint
+        name_b: "cafe\u0301"         # NFD: e + combining accent
+        # Also test homograph: "аlpha" (Cyrillic а) vs "alpha" (Latin a)
+        name_c: "\u0430lpha"         # Cyrillic а + latin lpha
+        name_d: "alpha"              # All ASCII
+        test_type: "collision_detection"
+        expected_behavior: "normalize_or_reject_ambiguous"
+      assertions:
+        - unicode_normalization_enforced: true
+        - homograph_attack_prevented: true
+
+  success_criteria:
+    - state_reads_require_auth: true
+    - storage_bomb_prevented: true
+    - state_roots_consistent: true
+    - state_proofs_valid: true
+    - unicode_collisions_handled: true
+    expected_findings:
+      - id: STATE-001
+        description: "/api/v1/state/path/:key readable without authentication"
+        severity: medium
+      - id: STATE-002
+        description: "State inclusion proofs may be null stubs (not real Merkle proofs)"
+        severity: high
+      - id: STATE-003
+        description: "No per-account storage quota — state bomb possible via name service"
+        severity: medium

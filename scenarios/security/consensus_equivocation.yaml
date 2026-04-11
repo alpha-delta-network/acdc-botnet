@@ -1,0 +1,163 @@
+scenario:
+  metadata:
+    id: "SEC-013"
+    name: "BFT Consensus Equivocation and Safety Attack"
+    type: security
+    severity: critical
+    duration: "30 minutes"
+    description: |
+      Adversarial BFT consensus tests targeting Delta BFT safety properties.
+      T3.6 tested skey2 BFT challenge (key rotation under attack). This goes
+      further:
+        1. Equivocation detection — validator signs two different blocks at same height
+        2. View-change flooding — spam view-change messages to stall progress
+        3. Withhold-and-release — validator withholds votes, releases in burst
+        4. Conflicting proposal injection — proposer sends different blocks to different nodes
+        5. Safety under network partition — partition 2f nodes, check no safety violation
+        6. Validator key rotation under equivocation — can rotation hide equivocation?
+
+      BFT safety property: no two honest nodes commit different blocks at same height.
+      Liveness property: honest nodes eventually commit a block.
+
+  setup:
+    bots:
+      - id: "byzantine-validator-{1-2}"
+        role: "validator_node"
+        variant: "byzantine"
+        count: 2
+        # f=1 for 5-validator BFT (tolerates 1 byzantine), f=2 might break safety
+        stake: 10000
+      - id: "honest-monitor-{1-3}"
+        role: "general_user"
+        variant: "observer"
+        count: 3
+
+  phases:
+
+    - name: "Baseline consensus health"
+      duration: "3 min"
+      bots: "honest-monitor-1"
+      behavior: "verify.bft_properties"
+      params:
+        check_interval_sec: 10
+        properties:
+          - alpha_height_advancing: true
+          - delta_height_advancing: true
+          - no_forks: true
+          - committee_formed: true
+      assertions:
+        - all_bft_properties_hold: true
+
+    - name: "Equivocation — double signing"
+      duration: "5 min"
+      bots: "byzantine-validator-1"
+      behavior: "byzantine.equivocate"
+      params:
+        attack_type: double_sign
+        # Sign two different block proposals for height H
+        # Send fork-A to nodes testnet001-testnet002
+        # Send fork-B to nodes testnet003-testnet005
+        target_height: current + 5
+        fork_a_target_nodes: ["testnet001", "testnet002"]
+        fork_b_target_nodes: ["testnet003", "testnet004", "testnet005"]
+        sign_both_forks: true
+        # With f=1 (1 byzantine, 4 honest), safety holds — neither fork gets 2f+1=4 votes
+        expected_outcome: neither_fork_commits
+      metrics:
+        - equivocation_detections: count
+        - slashing_events: count
+        - consensus_stall_sec: gauge
+      assertions:
+        - equivocation_detected: true           # EXPECTED: detection mechanism
+        - equivocating_validator_slashed: true  # EXPECTED: slashing
+        - no_conflicting_blocks_committed: true # CRITICAL safety property
+        - consensus_resumes_after: true         # liveness: eventually recovers
+
+    - name: "View-change flooding"
+      duration: "5 min"
+      bots: "byzantine-validator-{1-2}"
+      behavior: "byzantine.view_change_flood"
+      params:
+        # Spam view-change messages to force repeated view changes
+        # This stalls block production without violating safety
+        view_change_rate_per_sec: 100
+        duration_sec: 240
+        # Valid view-change messages (signed) vs invalid
+        signed: true
+      metrics:
+        - view_changes_triggered: count
+        - blocks_produced_during_flood: count  # should still produce some blocks
+        - consensus_liveness_maintained: bool
+      assertions:
+        - rate_limit_on_view_change: true      # EXPECTED BUG: likely no rate limit
+        - liveness_not_permanently_broken: true
+        - blocks_per_minute_above_threshold: ">1"
+
+    - name: "Withhold and release attack"
+      duration: "5 min"
+      bots: "byzantine-validator-1"
+      behavior: "byzantine.withhold_attestations"
+      params:
+        withhold_for_blocks: 10    # withhold votes for 10 blocks
+        then_release_all: true     # release all at once — potential chain reorg
+        # With 5 validators, withholding 1 still allows 4/5 honest to reach 2f+1=4
+        # So this should NOT cause safety violation but may cause momentary slowdown
+        expected_no_reorg: true
+      assertions:
+        - no_reorg_from_withhold_release: true
+        - chain_continues_advancing: true
+
+    - name: "Conflicting proposal injection"
+      duration: "5 min"
+      bots: "byzantine-validator-2"
+      behavior: "byzantine.propose_invalid_blocks"
+      params:
+        proposals:
+          - type: "conflicting_txset"
+            description: "Propose block with tx set A to half nodes, tx set B to other half"
+            expect_rejection: true  # honest validators reject conflicting proposals
+          - type: "double_spend_tx"
+            description: "Include tx spending same output twice in one block"
+            expect_rejection: true
+          - type: "invalid_signature_tx"
+            description: "Include tx with invalid Schnorr signature"
+            expect_rejection: true
+          - type: "future_timestamp"
+            description: "Block timestamp 1 year in future"
+            expect_rejection: true
+          - type: "invalid_state_root"
+            description: "Block with wrong state_root (doesn't match tx execution)"
+            expect_rejection: true
+      assertions:
+        - all_invalid_proposals_rejected: true
+        - honest_validators_reach_consensus_on_valid_block: true
+
+    - name: "Monitor — safety invariant check"
+      duration: "5 min"
+      bots: "honest-monitor-{1-3}"
+      behavior: "verify.bft_properties"
+      params:
+        check_interval_sec: 5
+        properties:
+          - no_two_nodes_committed_different_block_same_height: true   # SAFETY
+          - height_monotonically_increasing: true
+          - no_forks_persisted: true
+        # Also check logs for equivocation events
+        check_logs_for:
+          - equivocation_detected: true
+          - byzantine_validator_identified: true
+      assertions:
+        - safety_never_violated: true    # CRITICAL — if this fails, BFT is broken
+
+  success_criteria:
+    - equivocation_detected_and_slashed: true
+    - safety_invariant_never_violated: true  # Highest priority
+    - liveness_recovers_after_attack: true
+    - no_permanent_consensus_stall: true
+    expected_findings:
+      - id: CONSENSUS-001
+        description: "View-change messages may not be rate-limited — flooding viable"
+        severity: medium
+      - id: CONSENSUS-002
+        description: "Equivocation detection and slashing mechanism — verify actually implemented"
+        severity: critical

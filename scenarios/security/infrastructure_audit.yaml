@@ -1,0 +1,231 @@
+scenario:
+  metadata:
+    id: "SEC-016"
+    name: "Infrastructure and Network Security Audit"
+    type: security
+    severity: high
+    duration: "20 minutes"
+    description: |
+      Infrastructure-layer security tests targeting the testnet deployment.
+      Covers network-level attack vectors not tested by protocol-level scenarios:
+
+        1. Dev-mode leakage — ADNET_DEV_PROOF=1 is set on testnet; does this
+           bypass proof verification on production-facing endpoints?
+        2. WebSocket upgrade attack — /ws endpoint; can it be used for persistent
+           exfiltration or bypass REST auth?
+        3. Connection exhaustion — HTTP keep-alive + slow-read to exhaust connections
+        4. Request smuggling — HTTP/1.1 chunked vs Content-Length desync
+        5. Response splitting — inject CRLF into echoed state key
+        6. GraphQL — introspection, field suggestion, alias bombing, batch queries
+        7. SSRF via oracle/payment-code endpoints — inject internal addresses
+        8. Swap endpoint race condition — initiate + accept + refund simultaneously
+
+      Live recon:
+        - ADNET_DEV_PROOF=1 confirmed on prover001 via process env (via systemd)
+        - /ws endpoint: HTTP 200 (WebSocket upgrade handled)
+        - GraphQL: live, __schema returns null but queries may still work
+        - CORS: access-control-allow-origin: * (wildcard)
+
+  setup:
+    bots:
+      - id: "infra-auditor-{1-8}"
+        role: "general_user"
+        variant: "power"
+        count: 8
+        wallet_ax: 500000
+
+  phases:
+
+    - name: "Dev-mode proof bypass"
+      duration: "4 min"
+      bots: "infra-auditor-1"
+      behavior: "api.dev_mode_probe"
+      params:
+        description: |
+          ADNET_DEV_PROOF=1 makes the prover accept any proof without ZK verification.
+          This flag is for testnet convenience but should NOT affect proof VERIFICATION
+          on validator nodes. Test: submit a fake proof to a validator — should still
+          be rejected if the validator enforces real ZK verification regardless of prover mode.
+        tests:
+          - endpoint: "/api/v1/verify-proof"
+            proof_bytes: "0000000000000000000000000000000000000000"
+            public_inputs: {"amount": 1000}
+            circuit: "shielded_transfer"
+            expected: 400_or_422           # validator must reject fake proof
+          - endpoint: "/api/v1/transactions/submit/private"
+            # Private tx includes a ZK proof — submit with zeroed proof
+            include_zeroed_proof: true
+            expected: [400, 422]           # must reject, even with ADNET_DEV_PROOF=1 on prover
+          # Check if ADNET_SKIP_VK_VERIFY flag leaks to validators
+          - endpoint: "/api/v1/status"
+            check_response_for:
+              - "dev_proof" in response: false   # must not expose debug flags
+              - "skip_vk" in response: false
+      assertions:
+        - validators_enforce_real_zk: true     # CRITICAL — dev mode must not affect validators
+        - debug_flags_not_exposed: true
+
+    - name: "WebSocket security"
+      duration: "3 min"
+      bots: "infra-auditor-2"
+      behavior: "api.websocket_audit"
+      params:
+        ws_endpoint: "ws://testnet001.ac-dc.network:8080/ws"  # nosemgrep: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket — intentional: testnet uses unencrypted HTTP; wss requires TLS which testnet does not have
+        tests:
+          - name: "unauthenticated connect"
+            connect_without_auth: true
+            expected: "401_or_connection_closed"  # must require auth
+          - name: "auth_with_invalid_token"
+            auth_header: "Bearer invalid-token-xyz"
+            expected: "401_or_connection_closed"
+          - name: "message_flood"
+            connect_with_valid_auth: false   # if unauthenticated allowed
+            message_rate_per_sec: 10000
+            message_size_bytes: 1024
+            duration_sec: 10
+            check_rate_limit_or_disconnect: true
+          - name: "oversized_message"
+            message_size_mb: 10
+            expected: "disconnect_or_error"
+          - name: "auth_bypass_via_upgrade"
+            description: "Does WebSocket bypass REST auth checks?"
+            send_rest_like_request_over_ws: true
+            check_for_data_returned: true
+      assertions:
+        - ws_requires_auth: true
+        - ws_rate_limited: true
+        - ws_no_auth_bypass: true
+
+    - name: "GraphQL security"
+      duration: "3 min"
+      bots: "infra-auditor-3"
+      behavior: "api.graphql_audit"
+      params:
+        endpoint: "/graphql"
+        tests:
+          - name: "full_introspection"
+            query: "{__schema{types{name fields{name}}}}"
+            expected: "disabled_or_limited"   # introspection in prod = info disclosure
+          - name: "alias_bombing"
+            description: "100 aliases for same expensive resolver"
+            query_aliases: 100
+            alias_target: "block"
+            expected: "rate_limited_or_rejected"
+          - name: "query_depth_attack"
+            # adnet returned an error at depth 7 — verify depth limit enforced
+            depth: 20
+            expected: "rejected_with_depth_error"
+          - name: "batch_query_flood"
+            batch_size: 1000      # 1000 operations in one request
+            expected: "rate_limited_or_rejected"
+          - name: "field_suggestion_disclosure"
+            invalid_field: "ballance"   # typo
+            check_for_suggestion: true  # "Did you mean balance?" leaks schema
+          - name: "subscription_exhaustion"
+            open_subscriptions: 100
+            expected: "connection_capped"
+      assertions:
+        - introspection_disabled: true
+        - depth_limit_enforced: true
+        - alias_bombing_rejected: true
+        - batch_size_limited: true
+
+    - name: "SSRF via oracle and payment-code endpoints"
+      duration: "3 min"
+      bots: "infra-auditor-4"
+      behavior: "api.ssrf_probe"
+      params:
+        tests:
+          - endpoint: "/api/v1/oracle/prices"
+            method: POST
+            description: "If oracle fetches from external URL, inject internal target"
+            probe_payload:
+              source_url: "http://169.254.169.254/latest/meta-data/"   # AWS IMDS
+            expected: [400, 401, 422]   # must not reach IMDS
+          - endpoint: "/api/v1/payment-codes/notify"
+            description: "Payment notification callback URL injection"
+            probe_payload:
+              callback_url: "http://169.254.169.254/latest/meta-data/"
+              payment_code: "pc_test_001"
+            expected: [400, 401, 422]
+          - endpoint: "/api/v1/payment-codes/resolve/http%3A%2F%2F169.254.169.254"
+            description: "URL-encoded SSRF in path param"
+            expected: [400, 404]
+        check_no_internal_data_returned: true
+      assertions:
+        - ssrf_endpoints_not_reachable: true
+
+    - name: "Swap endpoint race condition"
+      duration: "4 min"
+      bots: "infra-auditor-{5-8}"
+      behavior: "swap.race_attack"
+      params:
+        description: |
+          Atomic swap: initiate → accept → complete/refund
+          Race: multiple bots simultaneously accept the same swap ID
+        steps:
+          - bot: "infra-auditor-5"
+            action: initiate_swap
+            offer:
+              from_asset: "AX"
+              to_asset: "DX"
+              amount: 100000
+            capture: swap_id
+          - bots: "infra-auditor-{6-8}"
+            action: accept_swap_concurrent  # 3 bots simultaneously accept same swap_id
+            swap_id: "{captured_swap_id}"
+            expected: "only_one_accepted"
+          - check: at_most_one_acceptance
+          # Also test: refund + complete simultaneously
+          - bot: "infra-auditor-5"
+            action: initiate_swap_2
+            capture: swap_id_2
+          - bots: ["infra-auditor-6", "infra-auditor-7"]
+            concurrent_actions:
+              - action: complete_swap
+                swap_id: "{swap_id_2}"
+              - action: refund_swap
+                swap_id: "{swap_id_2}"
+            expected: "exactly_one_succeeds"
+      assertions:
+        - concurrent_swap_acceptance_safe: true
+        - complete_and_refund_mutually_exclusive: true
+
+    - name: "Response splitting via state key"
+      duration: "2 min"
+      bots: "infra-auditor-1"
+      behavior: "api.response_splitting"
+      params:
+        tests:
+          - endpoint: "/api/v1/state/path/{key}"
+            key_variants:
+              # The key is echoed back in JSON — test if CRLF injection possible
+              - "valid_key\r\nX-Injected: header"
+              - "valid_key\nX-Injected: header"
+              - "valid_key%0d%0aX-Injected: header"
+              - "valid_key%0aX-Injected: header"
+            check_for:
+              - injected_header_in_response: false   # must not appear
+              - key_sanitized_in_json: true
+      assertions:
+        - no_header_injection_via_state_key: true
+
+  success_criteria:
+    - dev_mode_not_bypass_validators: true   # CRITICAL
+    - ws_auth_required: true
+    - graphql_introspection_disabled: true
+    - ssrf_blocked: true
+    - swap_race_safe: true
+    expected_findings:
+      - id: INFRA-001
+        description: "ADNET_DEV_PROOF=1 on testnet prover — verify it doesn't affect validator ZK checks"
+        severity: critical
+      - id: INFRA-002
+        description: "GraphQL introspection partially accessible (__schema returns null but endpoint live)"
+        severity: low
+      - id: INFRA-003
+        description: "WebSocket /ws endpoint — authentication requirement unverified"
+        severity: medium
+      - id: INFRA-004
+        description: "/api/v1/state/path/:key unauthenticated — echoes key back (potential CRLF)"
+        severity: medium
