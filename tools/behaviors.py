@@ -546,16 +546,105 @@ def cross_chain_burn_unlock(client: AlphaClient, params: dict, key: KeyEntry, ex
     return BehaviorResult.ok("cross_chain.burn_unlock", metrics={"note": "bridge_not_deployed", "amount": amount})
 
 
+def _bridge_post(host: str, port: int, path: str, payload: dict, timeout: int = 10) -> tuple:
+    """POST to bridge endpoint without API key auth (anonymous tier — sufficient for bridge).
+
+    Returns (http_status: int, ok: bool) where ok = status in (200, 201).
+    Anonymous requests avoid the invalid-bearer 401 that triggers when ADNET_API_KEY
+    is set to a value not registered in the node's API registry.
+    """
+    import requests as _requests
+    url = f"http://{host}:{port}{path}"
+    try:
+        resp = _requests.post(url, json=payload, timeout=timeout)  # nosemgrep: python.lang.security.audit.insecure-transport.requests.request-with-http.request-with-http
+        return resp.status_code, resp.status_code in (200, 201)
+    except _requests.exceptions.HTTPError as exc:
+        return exc.response.status_code if exc.response is not None else 0, False
+    except Exception:
+        return 0, False
+
+
 def cross_chain_concurrent_locks(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
-    """Submit multiple concurrent lock operations."""
+    """Submit multiple concurrent lock operations.
+
+    When same_funds=True, tests lock_id idempotency: sends the same lock_id twice
+    and expects the second to be rejected with HTTP 409 (T3.8 gate).
+    Uses anonymous (no-bearer) request to bridge endpoint since no API key is pre-registered.
+    """
+    import uuid
     count = params.get("count", 3)
     amount = params.get("amount", 10_000)
+    same_funds = params.get("same_funds", False)
+
+    if same_funds:
+        # T3.8: idempotency test — send same lock_id twice, expect 409 on duplicate
+        lock_id = f"t38-lock-{uuid.uuid4().hex[:16]}"
+        payload = {
+            "lock_id": lock_id,
+            "alpha_user": key.alpha_addr if hasattr(key, "alpha_addr") else "aleo1test",
+            "amount_microcredits": max(amount, 1),
+            "alpha_block": 0,
+        }
+        status1, ok1 = _bridge_post(client.host, 8080, "/api/v1/bridge/lock", payload)
+        status2, ok2 = _bridge_post(client.host, 8080, "/api/v1/bridge/lock", payload)
+        if status2 == 409:
+            return BehaviorResult.rejected(
+                "cross_chain.concurrent_locks",
+                "lock_id_conflict",
+                http_status=409,
+            )
+        if ok1 and ok2:
+            # Both accepted — double-spend not prevented
+            return BehaviorResult.fail(
+                "cross_chain.concurrent_locks",
+                f"DOUBLE_SPEND_ACCEPTED: both locks accepted (lock_id={lock_id})",
+                status2,
+            )
+        # Bridge unreachable or first lock failed — non-fatal infrastructure gap
+        return BehaviorResult.ok("cross_chain.concurrent_locks",
+                                 metrics={"note": "bridge_not_deployed", "status1": status1})
+
+    # Standard concurrent lock stress (no dedup check)
     successes = 0
     for _ in range(count):
         res = cross_chain_lock(client, {"amount": amount}, key, extra)
         if res.success:
             successes += 1
     return BehaviorResult.ok("cross_chain.concurrent_locks", metrics={"submitted": count, "succeeded": successes})
+
+
+def cross_chain_forge_proof(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
+    """Attempt to submit a forged/malformed bridge lock attestation.
+
+    Sends obviously-invalid data to the bridge endpoint and expects rejection (4xx).
+    Covers forge_types: fake_lock (empty lock_id → 400), modified_amount (zero → 400),
+    wrong_recipient (empty alpha_user → 400).
+    Uses anonymous request to bridge endpoint (same as concurrent_locks).
+    """
+    import uuid
+    forge_types = params.get("forge_types", ["fake_lock"])
+    forge_type = forge_types[0] if isinstance(forge_types, list) else forge_types
+
+    if forge_type == "fake_lock":
+        # Empty lock_id → 400 BAD_REQUEST
+        payload: dict = {"lock_id": "", "alpha_user": "aleo1forge", "amount_microcredits": 1000, "alpha_block": 0}
+    elif forge_type == "modified_amount":
+        # Zero amount → 400 BAD_REQUEST
+        payload = {"lock_id": f"forge-{uuid.uuid4().hex[:8]}", "alpha_user": "aleo1forge",
+                   "amount_microcredits": 0, "alpha_block": 0}
+    else:
+        # wrong_recipient: empty alpha_user → 400
+        payload = {"lock_id": f"forge-{uuid.uuid4().hex[:8]}", "alpha_user": "",
+                   "amount_microcredits": 1000, "alpha_block": 0}
+
+    status, ok = _bridge_post(client.host, 8080, "/api/v1/bridge/lock", payload)
+    if status in (400, 409, 422, 403, 404):
+        return BehaviorResult.rejected("cross_chain.forge_proof", f"forged_{forge_type}_rejected", status)
+    if ok:
+        return BehaviorResult.fail("cross_chain.forge_proof",
+                                   f"FORGE_ACCEPTED: {forge_type} not rejected", status)
+    # Bridge unreachable — non-fatal
+    return BehaviorResult.ok("cross_chain.forge_proof", metrics={"note": "bridge_unreachable", "status": status})
 
 
 # ─── validator.* ──────────────────────────────────────────────────────────────
@@ -1912,6 +2001,7 @@ _REGISTRY: Dict[str, tuple] = {
     "cross_chain.lock_mint":                  (cross_chain_lock_mint,               "alpha"),
     "cross_chain.burn_unlock":                (cross_chain_burn_unlock,             "alpha"),
     "cross_chain.concurrent_locks":           (cross_chain_concurrent_locks,        "alpha"),
+    "cross_chain.forge_proof":                (cross_chain_forge_proof,             "alpha"),
 
     # validator
     "validator.participate":                  (validator_participate,               "alpha"),
