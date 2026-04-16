@@ -137,6 +137,14 @@ SUITE_MAP: Dict[str, Dict[str, Any]] = {
         "tier": 3,
         "description": "MEV extraction",
     },
+    "T3.10": {
+        "scenario": "security/cryptographic_audit.yaml",
+        "timeout": 300,
+        "max_bots": 5,
+        "tier": 3,
+        "description": "Cryptographic implementation audit (SEC-015)",
+        "critical": True,
+    },
 }
 
 
