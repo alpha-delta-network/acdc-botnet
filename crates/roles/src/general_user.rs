@@ -1,9 +1,20 @@
 /// General user bot role
 ///
-/// Simulates regular user operations like transfers and balance queries
+/// Simulates regular user operations like transfers and balance queries.
+///
+/// `submit_tx` targets the gauntlet endpoints `/api/v1/{alpha,delta}/tx`
+/// (wired to M1 in adnet PR #612). These accept Bearer ak_* auth, accept
+/// hex-encoded tx bytes, and queue a TxProofTask in the shared ProofMempool —
+/// so a bot population running this behavior at rate N generates ~N tx-proof
+/// jobs per second, driving the real Nova IVC prover.
 use adnet_testbot::{BehaviorResult, Bot, BotContext, BotError, Result};
 use async_trait::async_trait;
+use rand::RngCore;
 use serde_json::json;
+
+/// Default gauntlet auth token. Any "Bearer ak_*" passes check_ak_auth.
+/// Load-test harness auth; real wallet Schnorr is required at /submit/private.
+const DEFAULT_AK_TOKEN: &str = "Bearer ak_botnet_general_user_default";
 
 pub struct GeneralUserBot {
     id: String,
@@ -15,26 +26,40 @@ impl GeneralUserBot {
         Self { id, context: None }
     }
 
+    /// Unified-API base URL (port 8080). The scenarios' alphaos_rest field
+    /// historically pointed at the alpha REST port 3030, but the gauntlet
+    /// endpoints live on the unified API. We rewrite 3030→8080 if needed.
     fn api_base(&self) -> String {
-        self.context
+        let raw = self
+            .context
             .as_ref()
             .map(|c| c.execution.network.alphaos_rest.clone())
-            .unwrap_or_else(|| "http://localhost:3030".to_string())
+            .unwrap_or_else(|| "http://localhost:3030".to_string());
+        // Canonicalize to unified API port.
+        raw.replace(":3030", ":8080").replace(":3031", ":8080")
     }
 
-    async fn submit_tx(&self) -> Result<BehaviorResult> {
-        let api_base = self.api_base();
-        let url = format!("{}/api/v1/transactions", api_base);
+    /// Generate a 64-hex-char random payload ("encrypted tx" surrogate).
+    fn random_hex_payload() -> String {
+        let mut b = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut b);
+        hex::encode(b)
+    }
 
-        let payload = json!({
-            "from": format!("bot_{}", self.id),
-            "to": "0x0000000000000000000000000000000000000001",
-            "amount": "1",
-            "nonce": std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis(),
-        });
+    /// Alpha private-transfer simulation via gauntlet endpoint.
+    async fn submit_alpha_tx(&self) -> Result<BehaviorResult> {
+        self.submit_gauntlet_tx("alpha").await
+    }
+
+    /// Delta private-transfer simulation via gauntlet endpoint.
+    async fn submit_delta_tx(&self) -> Result<BehaviorResult> {
+        self.submit_gauntlet_tx("delta").await
+    }
+
+    async fn submit_gauntlet_tx(&self, chain: &str) -> Result<BehaviorResult> {
+        let api_base = self.api_base();
+        let url = format!("{}/api/v1/{}/tx", api_base, chain);
+        let payload = json!({"tx": Self::random_hex_payload()});
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
@@ -43,6 +68,7 @@ impl GeneralUserBot {
 
         let resp = client
             .post(&url)
+            .header("Authorization", DEFAULT_AK_TOKEN)
             .json(&payload)
             .send()
             .await
@@ -55,24 +81,29 @@ impl GeneralUserBot {
             .unwrap_or_else(|_| json!({"raw": "non-json response"}));
 
         if status.is_success() {
-            let tx_hash = body.get("tx_hash").cloned().unwrap_or(json!("unknown"));
-            tracing::info!("GeneralUserBot {} submit_tx OK: {}", self.id, tx_hash);
-            Ok(BehaviorResult::success(format!("submit_tx accepted: {}", tx_hash)).with_data(body))
+            let tx_id = body.get("tx_id").cloned().unwrap_or(json!("unknown"));
+            tracing::info!(
+                "GeneralUserBot {} submit_{}_tx OK: {}",
+                self.id,
+                chain,
+                tx_id
+            );
+            Ok(
+                BehaviorResult::success(format!("submit_{}_tx accepted: {}", chain, tx_id))
+                    .with_data(body),
+            )
         } else {
             tracing::warn!(
-                "GeneralUserBot {} submit_tx HTTP {}: {:?}",
+                "GeneralUserBot {} submit_{}_tx HTTP {}: {:?}",
                 self.id,
+                chain,
                 status,
                 body
             );
-            Ok(BehaviorResult::error(format!(
-                "submit_tx HTTP {}: {}",
-                status,
-                body.get("error")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown error")
-            ))
-            .with_data(body))
+            Ok(
+                BehaviorResult::error(format!("submit_{}_tx HTTP {}", chain, status))
+                    .with_data(body),
+            )
         }
     }
 
@@ -164,9 +195,18 @@ impl Bot for GeneralUserBot {
         );
 
         match behavior_id {
-            "submit_tx" => self.submit_tx().await,
+            // "default" is what scenario runners pass when a scenario file doesn't
+            // specify a behavior_id. Historically a no-op; now it actually drives
+            // load: alternates alpha/delta tx submissions, generating Nova IVC
+            // proof jobs in the shared ProofMempool.
+            // "default" / "submit_tx" / "transfer.ax" all alias to alpha submission.
+            // Scenario YAML historically uses several of these labels.
+            "default" | "submit_tx" | "submit_alpha_tx" | "transfer.ax" => {
+                self.submit_alpha_tx().await
+            }
+            "submit_delta_tx" => self.submit_delta_tx().await,
             "query_balance" => self.query_balance().await,
-            "check_status" => self.check_status().await,
+            "check_status" | "query.block_height" => self.check_status().await,
             other => Err(BotError::BehaviorError(format!("Unknown behavior_id: {}", other)).into()),
         }
     }

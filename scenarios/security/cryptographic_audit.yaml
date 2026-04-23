@@ -195,14 +195,15 @@ scenario:
   success_criteria:
     - zero_sig_rejected: true
     - malleable_sig_rejected: true
-    - no_nonce_reuse: true            # CRITICAL
+    - no_nonce_reuse: true
     - hardened_bip32_secure: true
     - poseidon_domain_sep_correct: true
     - field_overflow_handled: true
-    expected_findings:
-      - id: CRYPTO-001
-        description: "Verify Schnorr nonce is deterministic (HKDF) and tested under concurrent signing"
-        severity: high
-      - id: CRYPTO-002
-        description: "Verify signature malleability protection (canonical-s enforcement)"
-        severity: medium
+
+  expected_findings:
+    - id: CRYPTO-001
+      description: "Verify Schnorr nonce is deterministic (HKDF) and tested under concurrent signing"
+      severity: high
+    - id: CRYPTO-002
+      description: "Verify signature malleability protection (canonical-s enforcement)"
+      severity: medium
