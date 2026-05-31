@@ -1,0 +1,235 @@
+scenario:
+  metadata:
+    id: "FUNC-012"
+    name: "Governance-Authorized Upgrade — Shadow → Standby → Active Committee"
+    type: functional
+    duration: "6 hours"
+    suite_id: "T2.9"
+
+  description: |
+    Tests the full production upgrade lifecycle:
+      1. A new commit appears on adnet main (Radicle HEAD advances)
+      2. A governance proposal is submitted containing the approved_sha
+      3. Governor bots vote yes; quorum is reached
+      4. The upgrade watcher (Governance mode) detects the approved upgrade
+      5. Shadow validators upgrade first (not in BFT committee — zero risk)
+      6. Standby validators upgrade second (one tier above shadow)
+      7. Active committee validators upgrade last, one at a time (committee guard
+         ensures each waits until it rotates OUT of the active set before upgrading)
+      8. After the next 7-epoch rotation, un-upgraded standby nodes that entered
+         the active set remain at the old binary until the FOLLOWING rotation
+
+    Upgrade order invariant:
+      shadow (all) → standby (all) → active (one at a time, per rotation epoch)
+
+    Assert throughout:
+      - BFT consensus never loses quorum during the upgrade
+      - Alpha + Delta chains continue advancing blocks
+      - No validator upgrades while is_in_active_committee() == true
+      - Each tier is fully upgraded before the next tier begins
+      - Old binary nodes correctly identified in /api/v1/committee binary_version
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+      adnet_api: "http://localhost:8080"
+
+    bots:
+      # Governor bots — bond stake, vote on proposals, do NOT earn rewards
+      - id: "governor-{1-10}"
+        role: "governor"
+        variant: "active"
+        count: 10
+        wallet_ax: 50000000
+
+      # Shadow validators — lowest tier, earn-in in progress, not in committee
+      - id: "shadow-{1-10}"
+        role: "validator"
+        variant: "shadow"
+        count: 10
+        wallet_ax: 20000000
+
+      # Standby validators — passed earn-in threshold, waiting for active rotation
+      - id: "standby-{1-5}"
+        role: "validator"
+        variant: "standby"
+        count: 5
+        wallet_ax: 50000000
+
+      # Active committee validators — currently in BFT consensus (testnet001-005)
+      - id: "active-{1-5}"
+        role: "validator"
+        variant: "active"
+        count: 5
+        wallet_ax: 100000000
+
+      - id: "monitor-1"
+        role: "monitor"
+        count: 1
+        wallet_ax: 100000
+
+  phases:
+
+    # ── Phase 0: Baseline — chains healthy, all tiers in place ───────────────
+
+    - name: "Confirm baseline consensus and tier distribution"
+      duration: "5 min"
+      bots: "monitor-1"
+      behavior: "monitor.consensus"
+      assertions:
+        - consensus_healthy: true
+        - alpha_height: ">0"
+        - delta_height: ">0"
+
+    # ── Phase 1: Push a new commit and submit governance upgrade proposal ─────
+
+    - name: "Push new adnet commit (triggers upgrade candidate)"
+      duration: "5 min"
+      bots: "governor-1"
+      behavior: "governance.submit_upgrade_proposal"
+      params:
+        # approved_sha set at runtime from the new HEAD pushed to adnet main
+        component: "adnet"
+        build_lead_time_secs: 3600
+        description: "adnet v-next: new governance-authorized release"
+      assertions:
+        - proposal_submitted: true
+        - proposal_id_captured: true
+
+    - name: "Governors vote to approve upgrade"
+      duration: "15 min"
+      bots: "governor-*"
+      behavior: "governor.vote"
+      params:
+        # proposal_id from previous phase via extra state
+        vote: "yes"
+      assertions:
+        - votes_cast: ">=7"   # 70% of 10 governors
+
+    - name: "Confirm governance quorum reached"
+      duration: "5 min"
+      bots: "monitor-1"
+      behavior: "governance.verify_quorum"
+      params:
+        required_yes_pct: 67
+      assertions:
+        - quorum_reached: true
+        - upgrade_approved: true
+
+    # ── Phase 2: Shadow validators upgrade first ──────────────────────────────
+
+    - name: "Verify shadow validators not in active committee"
+      duration: "5 min"
+      bots: "shadow-*"
+      behavior: "governor.verify_no_fee_entry"
+      params:
+        epoch: 0
+        chain: 0
+      assertions:
+        - phase: PASS
+
+    - name: "Shadow validators: upgrade watcher fires, upgrade applied"
+      duration: "40 min"
+      bots: "shadow-*"
+      behavior: "upgrade.wait_for_completion"
+      params:
+        expected_outcome: "Success"
+        timeout_min: 35
+        verify_no_committee_disruption: true
+      assertions:
+        - all_upgraded: true
+        - consensus_maintained: true
+
+    - name: "Verify shadow nodes running new binary"
+      duration: "5 min"
+      bots: "shadow-*"
+      behavior: "upgrade.verify_binary_version"
+      params:
+        expected_sha_prefix: "new"
+      assertions:
+        - binary_updated: true
+
+    # ── Phase 3: Standby validators upgrade second ────────────────────────────
+
+    - name: "Confirm shadow fully upgraded before standby starts"
+      duration: "5 min"
+      bots: "monitor-1"
+      behavior: "upgrade.verify_tier_complete"
+      params:
+        tier: "shadow"
+      assertions:
+        - tier_upgrade_complete: true
+        - standby_not_yet_started: true
+
+    - name: "Standby validators: upgrade watcher fires"
+      duration: "40 min"
+      bots: "standby-*"
+      behavior: "upgrade.wait_for_completion"
+      params:
+        expected_outcome: "Success"
+        timeout_min: 35
+        verify_no_committee_disruption: true
+      assertions:
+        - all_upgraded: true
+        - consensus_maintained: true
+
+    # ── Phase 4: Active committee upgrades — one at a time per rotation ───────
+
+    - name: "Active validators: committee guard blocks upgrade while active"
+      duration: "10 min"
+      bots: "active-*"
+      behavior: "upgrade.verify_committee_guard_active"
+      assertions:
+        - upgrade_blocked_by_committee_guard: true
+
+    - name: "Wait for rotation epoch (epoch 7) — first active validator exits"
+      duration: "70 min"
+      bots: "monitor-1"
+      behavior: "monitor.consensus"
+      params:
+        min_epoch: 7
+        expect_rotation: true
+      assertions:
+        - consensus_healthy: true
+        - rotation_occurred: true
+
+    - name: "First rotated-out active validator upgrades"
+      duration: "40 min"
+      bots: "active-1"
+      behavior: "upgrade.wait_for_completion"
+      params:
+        expected_outcome: "Success"
+        timeout_min: 35
+      assertions:
+        - upgraded: true
+        - was_not_in_committee_during_upgrade: true
+
+    - name: "Consensus maintained with 4/5 committee + 1 upgrading"
+      duration: "5 min"
+      bots: "monitor-1"
+      behavior: "monitor.consensus"
+      assertions:
+        - consensus_healthy: true
+        - quorum_maintained: true
+
+    # ── Phase 5: Verify un-upgraded standby after rotation ───────────────────
+
+    - name: "Verify un-upgraded standby nodes after rotation"
+      duration: "10 min"
+      bots: "standby-*"
+      behavior: "upgrade.verify_binary_version"
+      params:
+        # Standby nodes that entered active set from previous rotation
+        # should still have old binary until NEXT rotation upgrades them
+        expect_mixed_versions: true
+      assertions:
+        - phase: PASS
+
+    - name: "Final consensus health check"
+      duration: "5 min"
+      bots: "monitor-1"
+      behavior: "monitor.consensus"
+      assertions:
+        - consensus_healthy: true
+        - all_chains_advancing: true

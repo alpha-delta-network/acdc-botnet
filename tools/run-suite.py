@@ -100,6 +100,13 @@ SUITE_MAP: Dict[str, Dict[str, Any]] = {
         "tier": 2,
         "description": "DEX trading session",
     },
+    "T2.9": {
+        "scenario": "functional/governance_upgrade_tiered.yaml",
+        "timeout": 600,
+        "max_bots": 30,
+        "tier": 2,
+        "description": "Governance-authorized upgrade: shadow → standby → active committee",
+    },
     "T2.6": {
         "scenario": "functional/governor_bond_no_rewards.yaml",
         "timeout": 360,
