@@ -100,6 +100,27 @@ SUITE_MAP: Dict[str, Dict[str, Any]] = {
         "tier": 2,
         "description": "DEX trading session",
     },
+    "T2.6": {
+        "scenario": "functional/governor_bond_no_rewards.yaml",
+        "timeout": 360,
+        "max_bots": 10,
+        "tier": 2,
+        "description": "Governor-bonded validator: bond without earn-in, verify absent from fee-tree",
+    },
+    "T2.7": {
+        "scenario": "functional/validator_owner_bond_and_claim.yaml",
+        "timeout": 600,
+        "max_bots": 10,
+        "tier": 2,
+        "description": "Validator-owner bond + earn-in + Merkle proof fee-tree claim",
+    },
+    "T2.8": {
+        "scenario": "functional/ax_dx_flows.yaml",
+        "timeout": 360,
+        "max_bots": 25,
+        "tier": 2,
+        "description": "AX send/receive + AX↔DX cross-chain bridge roundtrip",
+    },
     # Tier 3 — security, async
     "T3.1": {
         "scenario": "security/byzantine_validators.yaml",

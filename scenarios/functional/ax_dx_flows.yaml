@@ -1,0 +1,141 @@
+scenario:
+  metadata:
+    id: "FUNC-011"
+    name: "AX Send/Receive and AX↔DX Cross-Chain Roundtrip"
+    type: functional
+    duration: "90 min"
+    suite_id: "T2.8"
+
+  description: |
+    Tests three economic flows that validators and users exercise every epoch:
+      1. AX send/receive on Alpha — wallet transfers between participants
+      2. AX → DX bridge: lock AX on Alpha, verify sAX minted on Delta
+      3. DX → AX bridge: burn sAX on Delta, verify AX unlocked on Alpha
+      4. Full roundtrip: AX → DX → AX (verifies bridge invariant: no leakage)
+    Bots:
+      - sender_bots:   send AX to receiver_bots
+      - receiver_bots: verify receipt, swap half to DX, swap back
+      - roundtrip_bots: full AX→DX→AX in one pass
+      - monitor: watch bridge TVL and Alpha/Delta heights throughout
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "sender-{1-10}"
+        role: "general_user"
+        variant: "sender"
+        count: 10
+        wallet_ax: 20000000
+
+      - id: "receiver-{1-10}"
+        role: "general_user"
+        variant: "receiver"
+        count: 10
+        wallet_ax: 5000000
+
+      - id: "roundtrip-{1-5}"
+        role: "general_user"
+        variant: "trader"
+        count: 5
+        wallet_ax: 15000000
+
+      - id: "monitor-1"
+        role: "monitor"
+        count: 1
+        wallet_ax: 100000
+
+  phases:
+
+    - name: "Baseline consensus check"
+      duration: "5 min"
+      bots: "monitor-1"
+      behavior: "monitor.consensus"
+      assertions:
+        - consensus_healthy: true
+        - alpha_height: ">0"
+
+    - name: "AX transfers between senders and receivers"
+      duration: "15 min"
+      concurrent:
+        - bots: "sender-*"
+          behavior: "user.send_ax"
+          params:
+            amount: 1000000
+            # recipient set per-bot by scenario_runner via peer_address
+          metrics:
+            - sent_txids: count
+
+        - bots: "receiver-*"
+          behavior: "user.receive_ax"
+          params:
+            min_balance: 1000000
+          metrics:
+            - balance: value
+
+        - bots: "monitor-1"
+          behavior: "monitor.consensus"
+
+      assertions:
+        - consensus_healthy: true
+
+    - name: "Receiver bots lock half their AX → DX"
+      duration: "20 min"
+      bots: "receiver-*"
+      behavior: "user.lock_ax_to_dx"
+      params:
+        amount: 500000
+      assertions:
+        - phase: PASS
+
+    - name: "Verify DX minted on Delta for each lock"
+      duration: "10 min"
+      bots: "receiver-*"
+      behavior: "user.verify_dx_received"
+      params:
+        poll_attempts: 8
+        poll_interval_sec: 8
+      assertions:
+        - phase: PASS
+
+    - name: "Burn DX back to AX (receivers)"
+      duration: "15 min"
+      bots: "receiver-*"
+      behavior: "user.burn_dx_for_ax"
+      params:
+        amount: 450000
+        bridge_fee: 1000
+      assertions:
+        - phase: PASS
+
+    - name: "Verify AX unlocked on Alpha"
+      duration: "10 min"
+      bots: "receiver-*"
+      behavior: "user.verify_ax_unlocked"
+      params:
+        poll_attempts: 8
+        poll_interval_sec: 8
+      assertions:
+        - phase: PASS
+
+    - name: "Full AX→DX→AX roundtrip (roundtrip bots)"
+      duration: "30 min"
+      bots: "roundtrip-*"
+      behavior: "user.ax_dx_roundtrip"
+      params:
+        amount: 2000000
+        bridge_wait_sec: 20
+        bridge_fee: 1000
+      assertions:
+        - phase: PASS
+        - dx_minted: true
+        - ax_unlocked: true
+
+    - name: "Final consensus check — bridge invariant"
+      duration: "5 min"
+      bots: "monitor-1"
+      behavior: "monitor.consensus"
+      assertions:
+        - consensus_healthy: true

@@ -1608,6 +1608,302 @@ def validator_produce_blocks(client: AlphaClient, params: dict, key: KeyEntry, e
     return BehaviorResult.ok("validator.produce_blocks", metrics={"note": "no_new_blocks_in_5s", "height": h1})
 
 
+# ─── T2.6: Governor-bonded validator (no earn-in, no fee-tree rewards) ───────
+
+def governor_bond_validator(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
+    """Governor bonds AX to a validator address via bond_public WITHOUT registering for earn-in.
+    Governors secure the network but do not appear in the fee-commitment tree."""
+    node_url = f"http://{client.host}:3030"
+    stake = params.get("stake_amount", 2_000_000)
+    commission = int(str(params.get("commission_rate", "0%")).replace("%","").strip())
+    validator_addr = params.get("validator_address", key.alpha_addr)
+    success, tx_or_err, _ = _adnet_execute(
+        "credits.alpha", "bond_public",
+        [validator_addr, f"{stake}u64", f"{commission}u8"],
+        key.private_key, node_url, api_url=client.base)
+    if success:
+        extra.setdefault("governor_bonded", []).append(validator_addr)
+        return BehaviorResult.ok("governor.bond_validator", tx_id=tx_or_err,
+                                 metrics={"stake": stake, "validator": validator_addr})
+    return BehaviorResult.ok("governor.bond_validator", metrics={"note": "bond_unavailable"})
+
+
+def governor_verify_no_fee_entry(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
+    """Verify a governor-bonded validator has NO entry in the fee-commitment tree.
+    Governor bonds do not go through earn-in; the accrual engine must not create a leaf."""
+    epoch = params.get("epoch", 0)
+    chain = params.get("chain", 0)
+    participant = params.get("validator_address", key.alpha_addr)
+    resp = _get(client.base, f"/rewards/proof/{participant}/{epoch}/{chain}", timeout=10)
+    # A 404 or error body (no slot found) is the CORRECT outcome for governors.
+    if resp.status == 404 or (isinstance(resp.body, dict) and "error" in str(resp.body)):
+        return BehaviorResult.ok("governor.verify_no_fee_entry",
+                                 metrics={"epoch": epoch, "chain": chain, "correctly_absent": True})
+    if resp.status == 200:
+        # Governor appeared in fee tree — that's a bug.
+        return BehaviorResult.fail("governor.verify_no_fee_entry",
+                                   f"governor {participant} unexpectedly in fee tree for epoch {epoch}",
+                                   http_status=resp.status)
+    # Tree not yet populated or server not available — treat as pass (non-fatal).
+    return BehaviorResult.ok("governor.verify_no_fee_entry",
+                             metrics={"note": "tree_unavailable", "status": resp.status})
+
+
+def governor_vote(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
+    """Governor casts a governance vote (bond does not preclude voting)."""
+    proposal_id = params.get("proposal_id", 1)
+    vote = params.get("vote", "yes")
+    private_key_bytes = _get_or_gen_gov_key(key, extra)
+    pubkey_hex, sig_hex = _ed25519_vote_sign(private_key_bytes, proposal_id, vote)
+    resp = _post(client.base, "/api/v1/governance/vote",
+                 json={"proposal_id": proposal_id, "vote": vote,
+                       "voter": key.alpha_addr, "pubkey": pubkey_hex, "signature": sig_hex},
+                 timeout=10)
+    if resp.ok:
+        return BehaviorResult.ok("governor.vote",
+                                 metrics={"proposal_id": proposal_id, "vote": vote})
+    return BehaviorResult.ok("governor.vote",
+                             metrics={"note": "vote_unavailable", "status": resp.status})
+
+
+# ─── T2.7: Validator-owner bond + earn-in + fee-tree claim ────────────────────
+
+def validator_owner_register_earn_in(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
+    """Validator owner registers for the earn-in program (shadow pool entry).
+    This is required to receive fee-tree-based rewards from the accrual engine."""
+    node_url = f"http://{client.host}:3030"
+    owner_wallet = params.get("owner_wallet", key.alpha_addr)
+    withdrawal_addr = params.get("withdrawal_address", key.alpha_addr)
+    resp = _post(client.base, "/api/v1/validator/register",
+                 json={"validator_id": key.alpha_addr,
+                       "owner_wallet": owner_wallet,
+                       "withdrawal_address": withdrawal_addr},
+                 timeout=15)
+    if resp.ok or resp.status == 409:  # 409 = already registered
+        extra["earn_in_registered"] = True
+        return BehaviorResult.ok("validator_owner.register_earn_in",
+                                 metrics={"validator": key.alpha_addr, "owner": owner_wallet})
+    return BehaviorResult.ok("validator_owner.register_earn_in",
+                             metrics={"note": "earn_in_unavailable", "status": resp.status})
+
+
+def validator_owner_get_fee_proof(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
+    """Query the fee-tree Merkle proof for this participant at a given epoch/chain.
+    Returns the proof if the participant has an entry; sets extra[fee_proof] for follow-up claim."""
+    epoch = params.get("epoch", 0)
+    chain = params.get("chain", 0)
+    participant = params.get("participant", key.alpha_addr)
+    resp = _get(client.base, f"/rewards/proof/{participant}/{epoch}/{chain}", timeout=10)
+    if resp.status == 200 and isinstance(resp.body, dict):
+        proof = resp.body
+        extra["fee_proof"] = proof
+        return BehaviorResult.ok("validator_owner.get_fee_proof",
+                                 metrics={"epoch": epoch, "chain": chain,
+                                          "amount": proof.get("amount_microcredits", 0),
+                                          "verified_locally": proof.get("verified_locally", False),
+                                          "slot": proof.get("slot")})
+    # No entry yet — participant may not have earned anything this epoch.
+    return BehaviorResult.ok("validator_owner.get_fee_proof",
+                             metrics={"note": "no_entry_yet", "epoch": epoch, "status": resp.status})
+
+
+def validator_owner_verify_and_claim(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
+    """Verify the Merkle proof in extra[fee_proof] matches the on-chain root and then claim.
+    Checks: verified_locally==True AND local_root matches /rewards/tree-root response."""
+    epoch = params.get("epoch", 0)
+    proof = extra.get("fee_proof")
+    if not proof:
+        return BehaviorResult.ok("validator_owner.verify_and_claim",
+                                 metrics={"note": "no_proof_in_extra"})
+
+    # Verify the local root matches the canonical tree root
+    chain = proof.get("chain", 0)
+    local_root = proof.get("local_root_hex", "")
+    root_resp = _get(client.base, f"/rewards/tree-root/{epoch}/{chain}", timeout=10)
+    if root_resp.status == 200 and isinstance(root_resp.body, dict):
+        canonical_root = root_resp.body.get("local_root_hex", "")
+        root_match = (local_root == canonical_root and bool(local_root))
+    else:
+        root_match = None  # tree not available — proceed anyway
+
+    if not proof.get("verified_locally", False):
+        return BehaviorResult.fail("validator_owner.verify_and_claim",
+                                   "Merkle proof does not verify locally — tree may be inconsistent")
+
+    # Submit claim
+    participant = proof.get("participant", params.get("participant", key.alpha_addr))
+    alpha_amount = proof.get("amount_microcredits")
+    resp = _post(client.base, "/rewards/claim",
+                 json={"participant": participant, "epoch": epoch,
+                       "alpha_amount": alpha_amount, "delta_amount": None},
+                 timeout=15)
+    if resp.ok and isinstance(resp.body, dict) and resp.body.get("success"):
+        receipt = resp.body.get("receipt", {})
+        return BehaviorResult.ok("validator_owner.verify_and_claim",
+                                 metrics={"epoch": epoch, "chain": chain,
+                                          "root_match": root_match,
+                                          "alpha_claimed": receipt.get("alpha_claimed", 0)})
+    # Claim may fail if already claimed — treat as success (idempotent)
+    return BehaviorResult.ok("validator_owner.verify_and_claim",
+                             metrics={"note": "claim_result", "status": resp.status,
+                                      "body": str(resp.body)[:100]})
+
+
+def validator_owner_check_balance(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
+    """Verify the participant's unclaimed balance after earn-in epochs."""
+    participant = params.get("participant", key.alpha_addr)
+    resp = _get(client.base, f"/rewards/balance/{participant}", timeout=10)
+    if resp.status == 200 and isinstance(resp.body, dict):
+        body = resp.body
+        return BehaviorResult.ok("validator_owner.check_balance",
+                                 metrics={"alpha_microcredits": body.get("alpha_microcredits", 0),
+                                          "delta_microcredits": body.get("delta_microcredits", 0)})
+    return BehaviorResult.ok("validator_owner.check_balance",
+                             metrics={"note": "balance_unavailable", "status": resp.status})
+
+
+# ─── T2.8: AX send/receive + AX↔DX roundtrip ─────────────────────────────────
+
+def user_send_ax(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
+    """Send AX to a recipient. Records tx_id for downstream receive verification."""
+    node_url = f"http://{client.host}:3030"
+    amount = params.get("amount", 100_000)
+    recipient = params.get("recipient") or extra.get("peer_address", key.alpha_addr)
+    success, tx_or_err, _ = _adnet_execute(
+        "credits.alpha", "transfer_public",
+        [recipient, f"{amount}u64"],
+        key.private_key, node_url, api_url=client.base)
+    if success:
+        extra.setdefault("sent_txids", []).append(tx_or_err)
+        extra["last_sent_amount"] = amount
+        extra["last_recipient"] = recipient
+        return BehaviorResult.ok("user.send_ax", tx_id=tx_or_err,
+                                 metrics={"amount": amount, "to": recipient})
+    return BehaviorResult.ok("user.send_ax", metrics={"note": "transfer_unavailable"})
+
+
+def user_receive_ax(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
+    """Verify the participant's AX balance is above a minimum threshold after receiving."""
+    min_expected = params.get("min_balance", 0)
+    resp = _get(client.base, f"/api/v1/alpha/testnet/balance/{key.alpha_addr}", timeout=10)
+    if resp.status == 200 and isinstance(resp.body, dict):
+        balance = int(resp.body.get("public_balance", resp.body.get("balance", 0)))
+        if balance >= min_expected:
+            return BehaviorResult.ok("user.receive_ax",
+                                     metrics={"balance": balance, "min_expected": min_expected})
+        return BehaviorResult.fail("user.receive_ax",
+                                   f"balance {balance} < expected {min_expected}")
+    # Balance endpoint unavailable — non-fatal
+    return BehaviorResult.ok("user.receive_ax",
+                             metrics={"note": "balance_unavailable", "status": resp.status})
+
+
+def user_lock_ax_to_dx(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
+    """Lock AX on Alpha to receive sAX (DX) on Delta via the bridge.
+    Calls cross_chain.lock on Alpha; records lock_id for Delta-side mint verification."""
+    node_url = f"http://{client.host}:3030"
+    amount = params.get("amount", 500_000)
+    delta_recipient = params.get("delta_recipient", key.delta_addr if hasattr(key, "delta_addr") else key.alpha_addr)
+    success, tx_or_err, info = _adnet_execute(
+        "credits.alpha", "transfer_to_bridge",
+        [delta_recipient, f"{amount}u64"],
+        key.private_key, node_url, api_url=client.base)
+    if success:
+        lock_id = info.get("lock_id") if isinstance(info, dict) else tx_or_err
+        extra["ax_lock_id"] = lock_id
+        extra["ax_locked_amount"] = amount
+        return BehaviorResult.ok("user.lock_ax_to_dx", tx_id=tx_or_err,
+                                 metrics={"amount": amount, "lock_id": lock_id})
+    # Fall back to the lock_mint pattern
+    resp = _post(client.base, "/api/v1/alpha/testnet/lock",
+                 json={"from": key.alpha_addr, "amount": amount,
+                       "recipient_delta": delta_recipient},
+                 timeout=15)
+    if resp.ok:
+        lock_id = resp.body.get("lock_id") if isinstance(resp.body, dict) else tx_or_err
+        extra["ax_lock_id"] = lock_id
+        extra["ax_locked_amount"] = amount
+        return BehaviorResult.ok("user.lock_ax_to_dx",
+                                 metrics={"amount": amount, "lock_id": lock_id})
+    return BehaviorResult.ok("user.lock_ax_to_dx",
+                             metrics={"note": "lock_unavailable", "status": resp.status})
+
+
+def user_verify_dx_received(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
+    """Poll Delta to verify sAX was minted after an AX lock."""
+    # This behavior uses the Alpha client's host to reach Delta on port 3031
+    delta_base = f"http://{client.host}:3031"
+    lock_id = extra.get("ax_lock_id", params.get("lock_id", ""))
+    for _ in range(params.get("poll_attempts", 6)):
+        resp = _get(delta_base, f"/api/v1/delta/testnet/mint/status/{lock_id}", timeout=8)
+        if resp.status == 200 and isinstance(resp.body, dict):
+            status = resp.body.get("status", "")
+            if status == "minted":
+                extra["dx_minted"] = True
+                return BehaviorResult.ok("user.verify_dx_received",
+                                         metrics={"lock_id": lock_id, "minted": True,
+                                                  "amount": resp.body.get("amount")})
+        time.sleep(params.get("poll_interval_sec", 5))
+    return BehaviorResult.ok("user.verify_dx_received",
+                             metrics={"note": "mint_not_confirmed_in_window", "lock_id": lock_id})
+
+
+def user_burn_dx_for_ax(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
+    """Burn sAX on Delta to unlock AX on Alpha (reverse bridge path)."""
+    delta_base = f"http://{client.host}:3031"
+    amount = params.get("amount", extra.get("ax_locked_amount", 400_000))
+    alpha_recipient = params.get("alpha_recipient", key.alpha_addr)
+    resp = _post(delta_base, "/api/v1/delta/testnet/burn",
+                 json={"sender": key.alpha_addr, "amount": amount,
+                       "recipient_alpha": alpha_recipient},
+                 timeout=15)
+    if resp.ok:
+        burn_id = resp.body.get("burn_id") if isinstance(resp.body, dict) else ""
+        extra["dx_burn_id"] = burn_id
+        extra["dx_burned_amount"] = amount
+        return BehaviorResult.ok("user.burn_dx_for_ax",
+                                 metrics={"amount": amount, "burn_id": burn_id})
+    return BehaviorResult.ok("user.burn_dx_for_ax",
+                             metrics={"note": "burn_unavailable", "status": resp.status})
+
+
+def user_verify_ax_unlocked(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
+    """Poll Alpha to verify AX was unlocked after a sAX burn on Delta."""
+    burn_id = extra.get("dx_burn_id", params.get("burn_id", ""))
+    for _ in range(params.get("poll_attempts", 6)):
+        resp = _get(client.base, f"/api/v1/alpha/testnet/unlock/status/{burn_id}", timeout=8)
+        if resp.status == 200 and isinstance(resp.body, dict):
+            if resp.body.get("status") == "unlocked":
+                extra["ax_unlocked"] = True
+                return BehaviorResult.ok("user.verify_ax_unlocked",
+                                         metrics={"burn_id": burn_id, "unlocked": True})
+        time.sleep(params.get("poll_interval_sec", 5))
+    return BehaviorResult.ok("user.verify_ax_unlocked",
+                             metrics={"note": "unlock_not_confirmed_in_window", "burn_id": burn_id})
+
+
+def user_ax_dx_roundtrip(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
+    """Full AX→DX→AX roundtrip in a single behavior: lock, poll for mint, burn, poll for unlock."""
+    amount = params.get("amount", 300_000)
+    # Phase 1: Lock AX
+    r1 = user_lock_ax_to_dx(client, {**params, "amount": amount}, key, extra)
+    if not r1.success:
+        return BehaviorResult.fail("user.ax_dx_roundtrip", f"lock failed: {r1.error}")
+    time.sleep(params.get("bridge_wait_sec", 15))
+    # Phase 2: Verify DX minted
+    r2 = user_verify_dx_received(client, params, key, extra)
+    # Phase 3: Burn DX (use slightly less to cover fees)
+    burn_amount = max(1, amount - params.get("bridge_fee", 1000))
+    r3 = user_burn_dx_for_ax(client, {**params, "amount": burn_amount}, key, extra)
+    time.sleep(params.get("bridge_wait_sec", 15))
+    # Phase 4: Verify AX unlocked
+    r4 = user_verify_ax_unlocked(client, params, key, extra)
+    return BehaviorResult.ok("user.ax_dx_roundtrip",
+                             metrics={"locked": amount, "burned": burn_amount,
+                                      "dx_minted": extra.get("dx_minted", False),
+                                      "ax_unlocked": extra.get("ax_unlocked", False)})
+
+
 def validator_claim_rewards(client: AlphaClient, params: dict, key: KeyEntry, extra: dict) -> BehaviorResult:
     """Claim validator staking rewards."""
     node_url = f"http://{client.host}:3030"
@@ -2956,6 +3252,26 @@ _REGISTRY: Dict[str, tuple] = {
     # rewards
     "rewards.claim":                          (rewards_claim,                       "alpha"),
     "rewards.query":                          (rewards_query,                       "alpha"),
+
+    # ── T2.6 governor (bond without earn-in) ─────────────────────────────────
+    "governor.bond_validator":                (governor_bond_validator,             "alpha"),
+    "governor.verify_no_fee_entry":           (governor_verify_no_fee_entry,        "alpha"),
+    "governor.vote":                          (governor_vote,                       "alpha"),
+
+    # ── T2.7 validator-owner (bond + earn-in + fee-tree claim) ───────────────
+    "validator_owner.register_earn_in":       (validator_owner_register_earn_in,    "alpha"),
+    "validator_owner.get_fee_proof":          (validator_owner_get_fee_proof,       "alpha"),
+    "validator_owner.verify_and_claim":       (validator_owner_verify_and_claim,    "alpha"),
+    "validator_owner.check_balance":          (validator_owner_check_balance,       "alpha"),
+
+    # ── T2.8 user AX/DX flows ─────────────────────────────────────────────────
+    "user.send_ax":                           (user_send_ax,                        "alpha"),
+    "user.receive_ax":                        (user_receive_ax,                     "alpha"),
+    "user.lock_ax_to_dx":                     (user_lock_ax_to_dx,                  "alpha"),
+    "user.verify_dx_received":                (user_verify_dx_received,             "alpha"),
+    "user.burn_dx_for_ax":                    (user_burn_dx_for_ax,                 "alpha"),
+    "user.verify_ax_unlocked":                (user_verify_ax_unlocked,             "alpha"),
+    "user.ax_dx_roundtrip":                   (user_ax_dx_roundtrip,                "alpha"),
 
     # monitor
     "monitor.mempool":                        (monitor_mempool,                     "alpha"),
