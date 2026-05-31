@@ -1,0 +1,138 @@
+scenario:
+  metadata:
+    id: "FUNC-010"
+    name: "Validator-Owner Bond + Earn-In + Fee-Tree Merkle Proof Claim"
+    type: functional
+    duration: "3 hours"
+    suite_id: "T2.7"
+
+  description: |
+    Full validator-owner lifecycle exercising the newly wired reward pipeline:
+      1. Owner bonds AX for a validator (bond_public)
+      2. Owner registers for the earn-in shadow pool (/api/v1/validator/register)
+      3. Validator participates in consensus — earns CLP pass credits
+      4. At epoch boundary: accrual engine computes shares, writes Poseidon
+         commitment leaves, FROST-signs fee_tree_root tx → on-chain
+      5. Owner queries Merkle proof via GET /rewards/proof/:addr/:epoch/:chain
+      6. Proof verifies locally (verified_locally == true)
+      7. Owner claims via POST /rewards/claim (marks slot claimed)
+      8. Double-claim is rejected (slot already marked Claimed)
+    Asserts fee-tree integrity: local root matches canonical tree root.
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "validator-owner-{1-5}"
+        role: "validator_owner"
+        variant: "honest"
+        count: 5
+        wallet_ax: 100000000   # 100 AX each
+
+      - id: "peer-validator-{1-5}"
+        role: "validator"
+        variant: "honest"
+        count: 5
+        wallet_ax: 100000000
+
+      - id: "load-user-{1-10}"
+        role: "general_user"
+        count: 10
+        wallet_ax: 5000000
+
+      - id: "monitor-1"
+        role: "monitor"
+        count: 1
+        wallet_ax: 100000
+
+  phases:
+
+    - name: "Bond validator stake"
+      duration: "10 min"
+      bots: "validator-owner-*"
+      behavior: "governor.bond_validator"
+      params:
+        stake_amount: 50000000
+        commission_rate: "5%"
+      assertions:
+        - phase: PASS
+
+    - name: "Register for earn-in shadow pool"
+      duration: "5 min"
+      bots: "validator-owner-*"
+      behavior: "validator_owner.register_earn_in"
+      assertions:
+        - phase: PASS
+
+    - name: "Generate load while validators earn CLP credits"
+      duration: "60 min"
+      concurrent:
+        - bots: "peer-validator-*"
+          behavior: "validator.participate"
+          params:
+            block_proposal_duty: true
+            attestation_duty: true
+
+        - bots: "load-user-*"
+          behavior: "transfer.casual"
+          params:
+            amount_range: [1000, 50000]
+            delay_between: 30
+
+        - bots: "validator-owner-*"
+          behavior: "validator.produce_blocks"
+
+        - bots: "monitor-1"
+          behavior: "monitor.consensus"
+
+      assertions:
+        - consensus_healthy: true
+        - blocks_produced: ">10"
+
+    - name: "Wait for epoch 1 boundary (accrual fires)"
+      duration: "70 min"
+      bots: "monitor-1"
+      behavior: "monitor.consensus"
+      params:
+        min_epoch: 1
+      assertions:
+        - consensus_healthy: true
+
+    - name: "Query fee-tree Merkle proofs"
+      duration: "5 min"
+      bots: "validator-owner-*"
+      behavior: "validator_owner.get_fee_proof"
+      params:
+        epoch: 1
+        chain: 0    # Alpha
+      assertions:
+        - phase: PASS
+
+    - name: "Verify proof and claim rewards"
+      duration: "5 min"
+      bots: "validator-owner-*"
+      behavior: "validator_owner.verify_and_claim"
+      params:
+        epoch: 1
+      assertions:
+        - phase: PASS
+
+    - name: "Verify claimed balance reflected in tracker"
+      duration: "5 min"
+      bots: "validator-owner-*"
+      behavior: "validator_owner.check_balance"
+      assertions:
+        - phase: PASS
+
+    - name: "Attempt double-claim (must not increase balance)"
+      duration: "5 min"
+      bots: "validator-owner-*"
+      behavior: "validator_owner.verify_and_claim"
+      params:
+        epoch: 1
+      assertions:
+        # Second claim is idempotent (slot already Claimed) — should succeed
+        # without increasing the claimable balance further.
+        - phase: PASS

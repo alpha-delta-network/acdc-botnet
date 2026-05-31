@@ -1,0 +1,89 @@
+scenario:
+  metadata:
+    id: "FUNC-009"
+    name: "Governor-Bonded Validator — No Earn-In, No Fee-Tree Rewards"
+    type: functional
+    duration: "90 min"
+    suite_id: "T2.6"
+
+  description: |
+    Governors bond AX to validator addresses via bond_public WITHOUT registering
+    for the earn-in program. Asserts:
+      1. Bonds are accepted and balances decrease correctly
+      2. Governor-bonded validators DO NOT appear in the fee-commitment tree
+         (no leaf entry in /rewards/proof/:addr/:epoch/:chain)
+      3. Governors CAN vote on governance proposals
+      4. Committee epoch boundary does NOT add governor validators to the
+         accrual engine active set (they are not in eligible_for_active())
+    This distinguishes protocol-secured (governance) validators from
+    earn-in validators that receive fee-tree rewards.
+
+  setup:
+    network:
+      alpha_rest: "http://localhost:3030"
+      delta_rest: "http://localhost:3031"
+
+    bots:
+      - id: "governor-{1-10}"
+        role: "governor"
+        variant: "active"
+        count: 10
+        wallet_ax: 50000000   # 50 AX each for bonding
+
+      - id: "monitor-1"
+        role: "monitor"
+        count: 1
+        wallet_ax: 1000000
+
+  phases:
+
+    - name: "Governor bonds — no earn-in registration"
+      duration: "10 min"
+      bots: "governor-*"
+      behavior: "governor.bond_validator"
+      params:
+        stake_amount: 10000000   # 10 AX
+        commission_rate: "0%"
+      assertions:
+        - phase: PASS
+
+    - name: "Verify governors absent from fee-tree at epoch 0"
+      duration: "5 min"
+      bots: "governor-*"
+      behavior: "governor.verify_no_fee_entry"
+      params:
+        epoch: 0
+        chain: 0
+      assertions:
+        - phase: PASS
+        - correctly_absent: true
+
+    - name: "Governors vote on a governance proposal"
+      duration: "10 min"
+      bots: "governor-*"
+      behavior: "governor.vote"
+      params:
+        proposal_id: 1
+        vote: "yes"
+      assertions:
+        - phase: PASS
+
+    - name: "Wait for epoch boundary (epoch 1)"
+      duration: "30 min"
+      bots: "monitor-1"
+      behavior: "monitor.consensus"
+      params:
+        min_epoch: 1
+      assertions:
+        - consensus_healthy: true
+
+    - name: "Verify governors still absent from fee-tree at epoch 1"
+      duration: "5 min"
+      bots: "governor-*"
+      behavior: "governor.verify_no_fee_entry"
+      params:
+        epoch: 1
+        chain: 0
+      assertions:
+        - phase: PASS
+        - correctly_absent: true
