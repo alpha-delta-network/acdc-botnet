@@ -5,6 +5,7 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::time::Duration;
 
 /// Bot wallet loaded from config/testnet-bot-wallets.json
@@ -23,8 +24,34 @@ pub struct WalletStore {
 }
 
 impl WalletStore {
-    pub fn load(path: &str) -> anyhow::Result<Self> {
-        let data = std::fs::read_to_string(path)?;
+    /// Resolve the wallet file path from fixed, safe components only.
+    ///
+    /// The path is assembled exclusively from:
+    ///   1. `BOTNET_CONFIG_DIR` env var (default: `config/`) — treated as a
+    ///      base directory, never used as a complete path.
+    ///   2. The static filename literal `testnet-bot-wallets.json`.
+    ///
+    /// No user-supplied path component is accepted. This prevents path
+    /// traversal: the only variable is the base directory (an operator env
+    /// var, not request input), and the filename is hardcoded.
+    fn wallet_file_path() -> PathBuf {
+        let base = std::env::var("BOTNET_CONFIG_DIR")
+            .unwrap_or_else(|_| "config".to_string());
+        // Join with a static filename — never accept a filename from input.
+        let mut p = PathBuf::from(base);
+        p.push("testnet-bot-wallets.json");
+        p
+    }
+
+    /// Load wallets from the default config location.
+    ///
+    /// Path is resolved from `BOTNET_CONFIG_DIR` env var + static filename
+    /// `testnet-bot-wallets.json`. No path parameter is accepted — the
+    /// filename is hardcoded; only the base directory varies via env var.
+    pub fn load_default() -> anyhow::Result<Self> {
+        let path = Self::wallet_file_path();
+        let data = std::fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("WalletStore: cannot read {:?}: {}", path, e))?;
         let wallets: Vec<BotWallet> = serde_json::from_str(&data)?;
         Ok(Self { wallets })
     }
@@ -292,9 +319,38 @@ impl AdnetClient {
     // ── Governance ─────────────────────────────────────────────────────────
 
     /// Submit a governance proposal (POST /api/v1/governance/proposals)
+    ///
+    /// Legacy route — kept for backward compat during GOV-S1 migration.
+    /// Prefer submit_governance_proposal_alpha or submit_governance_proposal_delta.
     pub async fn submit_governance_proposal(&self, body: &serde_json::Value) -> Result<u64> {
         let response: serde_json::Value =
             self.post_json("/api/v1/governance/proposals", body).await?;
+        Ok(response.get("id").and_then(|v| v.as_u64()).unwrap_or(0))
+    }
+
+    /// Submit an Alpha governance proposal (POST /api/v1/alpha/governance/proposals)
+    ///
+    /// GOV-S1 chain-separated route. Alpha proposals only (GID governors).
+    pub async fn submit_governance_proposal_alpha(
+        &self,
+        body: &serde_json::Value,
+    ) -> Result<u64> {
+        let response: serde_json::Value = self
+            .post_json("/api/v1/alpha/governance/proposals", body)
+            .await?;
+        Ok(response.get("id").and_then(|v| v.as_u64()).unwrap_or(0))
+    }
+
+    /// Submit a Delta governance proposal (POST /api/v1/delta/governance/proposals)
+    ///
+    /// GOV-S1 chain-separated route. Delta proposals only (DX stake holders).
+    pub async fn submit_governance_proposal_delta(
+        &self,
+        body: &serde_json::Value,
+    ) -> Result<u64> {
+        let response: serde_json::Value = self
+            .post_json("/api/v1/delta/governance/proposals", body)
+            .await?;
         Ok(response.get("id").and_then(|v| v.as_u64()).unwrap_or(0))
     }
 
@@ -304,9 +360,37 @@ impl AdnetClient {
             .await
     }
 
+    /// Get grim trigger status via GCI endpoint (GET /api/governance/gci/{gid}/grim-trigger)
+    ///
+    /// GOV-S9 canonical endpoint. Returns rolling vote buffer and crippled status.
+    pub async fn get_gci_grim_trigger(&self, gid_address: &str) -> Result<serde_json::Value> {
+        self.get_json(&format!(
+            "/api/governance/gci/{}/grim-trigger",
+            gid_address
+        ))
+        .await
+    }
+
     /// List governance proposals (GET /api/v1/governance/proposals)
+    ///
+    /// Legacy route — kept for backward compat. Prefer get_governance_proposals_alpha
+    /// or get_governance_proposals_delta for chain-separated queries.
     pub async fn get_governance_proposals(&self) -> Result<GovernanceProposalsResponse> {
         self.get_json("/api/v1/governance/proposals").await
+    }
+
+    /// List Alpha governance proposals (GET /api/v1/alpha/governance/proposals)
+    ///
+    /// GOV-S1 chain-separated route. Returns Alpha-chain proposals only.
+    pub async fn get_governance_proposals_alpha(&self) -> Result<GovernanceProposalsResponse> {
+        self.get_json("/api/v1/alpha/governance/proposals").await
+    }
+
+    /// List Delta governance proposals (GET /api/v1/delta/governance/proposals)
+    ///
+    /// GOV-S1 chain-separated route. Returns Delta-chain proposals only.
+    pub async fn get_governance_proposals_delta(&self) -> Result<GovernanceProposalsResponse> {
+        self.get_json("/api/v1/delta/governance/proposals").await
     }
 
     /// Get a specific governance proposal (GET /api/v1/governance/proposals/:id)
@@ -315,7 +399,22 @@ impl AdnetClient {
             .await
     }
 
+    /// Get a specific Alpha governance proposal (GET /api/v1/alpha/governance/proposals/:id)
+    pub async fn get_governance_proposal_alpha(&self, id: u64) -> Result<serde_json::Value> {
+        self.get_json(&format!("/api/v1/alpha/governance/proposals/{}", id))
+            .await
+    }
+
+    /// Get a specific Delta governance proposal (GET /api/v1/delta/governance/proposals/:id)
+    pub async fn get_governance_proposal_delta(&self, id: u64) -> Result<serde_json::Value> {
+        self.get_json(&format!("/api/v1/delta/governance/proposals/{}", id))
+            .await
+    }
+
     /// Submit a governance vote (POST /api/v1/governance/proposals/:id/vote)
+    ///
+    /// Legacy route — kept for backward compat. Prefer submit_governance_vote_alpha
+    /// or submit_governance_vote_delta for chain-separated voting.
     pub async fn submit_governance_vote(
         &self,
         proposal_id: u64,
@@ -328,10 +427,89 @@ impl AdnetClient {
         .await
     }
 
+    /// Submit a vote on an Alpha governance proposal
+    /// (POST /api/v1/alpha/governance/proposals/:id/vote)
+    ///
+    /// GOV-S1 chain-separated route. GID membership validated server-side.
+    pub async fn submit_governance_vote_alpha(
+        &self,
+        proposal_id: u64,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.post_json(
+            &format!("/api/v1/alpha/governance/proposals/{}/vote", proposal_id),
+            body,
+        )
+        .await
+    }
+
+    /// Submit a vote on a Delta governance proposal
+    /// (POST /api/v1/delta/governance/proposals/:id/vote)
+    ///
+    /// GOV-S1 chain-separated route. DX stake (≥10k) validated server-side.
+    pub async fn submit_governance_vote_delta(
+        &self,
+        proposal_id: u64,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.post_json(
+            &format!("/api/v1/delta/governance/proposals/{}/vote", proposal_id),
+            body,
+        )
+        .await
+    }
+
+    /// Trigger execution of a passed Alpha proposal after timelock
+    /// (POST /api/v1/alpha/governance/proposals/:id/execute)
+    ///
+    /// GOV-S2 chain-separated route. Requires proposal status == "passed"
+    /// and timelock expiry. Returns 400 if called before timelock.
+    pub async fn execute_alpha_proposal(
+        &self,
+        proposal_id: u64,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.post_json(
+            &format!(
+                "/api/v1/alpha/governance/proposals/{}/execute",
+                proposal_id
+            ),
+            body,
+        )
+        .await
+    }
+
+    /// Trigger execution of a passed Delta proposal after timelock
+    /// (POST /api/v1/delta/governance/proposals/:id/execute)
+    ///
+    /// GOV-S5 chain-separated route. Requires proposal status == "passed"
+    /// and timelock expiry.
+    pub async fn execute_delta_proposal(
+        &self,
+        proposal_id: u64,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.post_json(
+            &format!(
+                "/api/v1/delta/governance/proposals/{}/execute",
+                proposal_id
+            ),
+            body,
+        )
+        .await
+    }
+
     /// Get GCI status for a gid_address (GET /api/governance/gci/{gid_address})
     pub async fn get_gci_status(&self, gid_address: &str) -> Result<serde_json::Value> {
         self.get_json(&format!("/api/governance/gci/{}", gid_address))
             .await
+    }
+
+    /// Get active GID roster via GCI (GET /api/governance/gci/active)
+    ///
+    /// GOV-S9 canonical endpoint. Returns list of all Active GIDs.
+    pub async fn get_gci_active_gids(&self) -> Result<serde_json::Value> {
+        self.get_json("/api/governance/gci/active").await
     }
 
     /// Get DEX orderbook for a market pair (GET /delta/v1/exchange/orderbook/{market})
@@ -583,9 +761,12 @@ mod tests {
     }
 
     #[test]
-    fn test_wallet_store_load() {
-        // WalletStore::load returns error for missing file
-        let result = WalletStore::load("/tmp/nonexistent-wallets.json");
-        assert!(result.is_err());
+    fn test_wallet_store_load_default_missing_dir() {
+        // load_default() with a non-existent BOTNET_CONFIG_DIR returns an error.
+        // We use a temp-unique dir name that cannot exist.
+        std::env::set_var("BOTNET_CONFIG_DIR", "/tmp/nonexistent-botnet-config-dir-99999");
+        let result = WalletStore::load_default();
+        std::env::remove_var("BOTNET_CONFIG_DIR");
+        assert!(result.is_err(), "expected error for missing config dir");
     }
 }
