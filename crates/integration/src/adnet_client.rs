@@ -35,8 +35,7 @@ impl WalletStore {
     /// traversal: the only variable is the base directory (an operator env
     /// var, not request input), and the filename is hardcoded.
     fn wallet_file_path() -> PathBuf {
-        let base = std::env::var("BOTNET_CONFIG_DIR")
-            .unwrap_or_else(|_| "config".to_string());
+        let base = std::env::var("BOTNET_CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
         // Join with a static filename — never accept a filename from input.
         let mut p = PathBuf::from(base);
         p.push("testnet-bot-wallets.json");
@@ -331,10 +330,7 @@ impl AdnetClient {
     /// Submit an Alpha governance proposal (POST /api/v1/alpha/governance/proposals)
     ///
     /// GOV-S1 chain-separated route. Alpha proposals only (GID governors).
-    pub async fn submit_governance_proposal_alpha(
-        &self,
-        body: &serde_json::Value,
-    ) -> Result<u64> {
+    pub async fn submit_governance_proposal_alpha(&self, body: &serde_json::Value) -> Result<u64> {
         let response: serde_json::Value = self
             .post_json("/api/v1/alpha/governance/proposals", body)
             .await?;
@@ -344,10 +340,7 @@ impl AdnetClient {
     /// Submit a Delta governance proposal (POST /api/v1/delta/governance/proposals)
     ///
     /// GOV-S1 chain-separated route. Delta proposals only (DX stake holders).
-    pub async fn submit_governance_proposal_delta(
-        &self,
-        body: &serde_json::Value,
-    ) -> Result<u64> {
+    pub async fn submit_governance_proposal_delta(&self, body: &serde_json::Value) -> Result<u64> {
         let response: serde_json::Value = self
             .post_json("/api/v1/delta/governance/proposals", body)
             .await?;
@@ -364,11 +357,8 @@ impl AdnetClient {
     ///
     /// GOV-S9 canonical endpoint. Returns rolling vote buffer and crippled status.
     pub async fn get_gci_grim_trigger(&self, gid_address: &str) -> Result<serde_json::Value> {
-        self.get_json(&format!(
-            "/api/governance/gci/{}/grim-trigger",
-            gid_address
-        ))
-        .await
+        self.get_json(&format!("/api/governance/gci/{}/grim-trigger", gid_address))
+            .await
     }
 
     /// List governance proposals (GET /api/v1/governance/proposals)
@@ -470,10 +460,7 @@ impl AdnetClient {
         body: &serde_json::Value,
     ) -> Result<serde_json::Value> {
         self.post_json(
-            &format!(
-                "/api/v1/alpha/governance/proposals/{}/execute",
-                proposal_id
-            ),
+            &format!("/api/v1/alpha/governance/proposals/{}/execute", proposal_id),
             body,
         )
         .await
@@ -490,10 +477,7 @@ impl AdnetClient {
         body: &serde_json::Value,
     ) -> Result<serde_json::Value> {
         self.post_json(
-            &format!(
-                "/api/v1/delta/governance/proposals/{}/execute",
-                proposal_id
-            ),
+            &format!("/api/v1/delta/governance/proposals/{}/execute", proposal_id),
             body,
         )
         .await
@@ -764,7 +748,10 @@ mod tests {
     fn test_wallet_store_load_default_missing_dir() {
         // load_default() with a non-existent BOTNET_CONFIG_DIR returns an error.
         // We use a temp-unique dir name that cannot exist.
-        std::env::set_var("BOTNET_CONFIG_DIR", "/tmp/nonexistent-botnet-config-dir-99999");
+        std::env::set_var(
+            "BOTNET_CONFIG_DIR",
+            "/tmp/nonexistent-botnet-config-dir-99999",
+        );
         let result = WalletStore::load_default();
         std::env::remove_var("BOTNET_CONFIG_DIR");
         assert!(result.is_err(), "expected error for missing config dir");
