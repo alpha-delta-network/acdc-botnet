@@ -9,8 +9,8 @@ steps:
     image: *rust_image
     pull: true
     commands:
-      - rustup component add --toolchain nightly rustfmt
-      - cargo +nightly fmt --all -- --check
+      - rustup component add rustfmt
+      - cargo fmt --all -- --check
     volumes:
       - /var/cache/cargo:/cargo_cache
     environment:
@@ -78,4 +78,3 @@ steps:
 
 labels:
   backend: docker
-
