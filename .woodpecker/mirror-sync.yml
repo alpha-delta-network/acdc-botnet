@@ -29,4 +29,4 @@ steps:
       - event: push
         branch: main
     commands:
-      - curl -sfX POST "http://source.ac-dc.network:8766/push/$CI_REPO_NAME"
+      - echo "radicle sync now per-merge server-side via Forgejo post-receive hook (daemon /push); cross-host CI curl -H "Authorization: token $FORGEJO_TOKEN" retired"
