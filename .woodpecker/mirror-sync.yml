@@ -29,4 +29,4 @@ steps:
       - event: push
         branch: main
     commands:
-      - echo "radicle sync now per-merge server-side via Forgejo post-receive hook (daemon /push); cross-host CI curl -H "Authorization: token $FORGEJO_TOKEN" retired"
+      - echo "radicle sync now runs per-merge server-side via Forgejo post-receive hook -> daemon /push; cross-host CI HTTP trigger retired"
